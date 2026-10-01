@@ -34,6 +34,8 @@ class MainActivity : Activity() {
     private var panel = Panel.BAGS
     private var state: GameState? = null
     private var lastSeq = -1
+    private var gotKeys: Set<String> = emptySet()
+    private var keyResult = ""
 
     @Volatile private var worker: Thread? = null
 
@@ -101,7 +103,10 @@ class MainActivity : Activity() {
             if (frame != null) {
                 misses = 0
                 val page = ItemNames.parse(frame.payload)
-                if (page != null) {
+                if (frame.payload.startsWith("TK1|")) {
+                    val keys = frame.payload.substring(4).split(',').filter { it.isNotEmpty() }.toSet()
+                    runOnUiThread { onKeys(keys) }
+                } else if (page != null) {
                     val changed = names.addAll(page)
                     runOnUiThread { onNames(changed) }
                 } else {
@@ -128,6 +133,13 @@ class MainActivity : Activity() {
         lastSeq = seq
         state = parsed
         if (panel != Panel.KEYS) render()
+    }
+
+    private fun onKeys(keys: Set<String>) {
+        status.text = "Connected, key test running"
+        if (keys == gotKeys) return
+        gotKeys = keys
+        if (panel == Panel.KEYS) render()
     }
 
     private fun onNames(changed: Boolean) {
@@ -190,20 +202,24 @@ class MainActivity : Activity() {
 
     /** Key test: each button sends one key to the game's screen; `/thor keytest` in game prints what arrives. */
     private fun renderKeys() {
-        content.addView(line("Type /thor keytest in the game, then tap a key. The game's chat should say which key it got.", DIM))
-        val result = line("", TEXT)
-        val grid = GridLayout(this).apply { columnCount = 3 }
+        content.addView(line("Type /thor keytest in the game, then tap each key once. Keys the game reports back turn green.", DIM))
+        val result = line(keyResult, TEXT)
+        val grid = GridLayout(this).apply { columnCount = 4 }
         for (key in TEST_KEYS) {
+            val got = key in gotKeys
             val b = Button(this).apply {
-                text = key
+                text = if (got) "✓ $key" else key
                 isAllCaps = false
-                setTextColor(TEXT)
-                background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(CARD) }
+                setTextColor(if (got) Color.BLACK else TEXT)
+                background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(if (got) GOT else CARD) }
                 setOnClickListener {
                     val target = gameDisplay()
                     Thread {
                         val err = KeySender.send(target, key)
-                        runOnUiThread { result.text = if (err == null) "Sent $key to screen $target" else "$key: $err" }
+                        runOnUiThread {
+                            keyResult = if (err == null) "Sent $key to screen $target" else "$key: $err"
+                            result.text = keyResult
+                        }
                     }.start()
                 }
             }
@@ -288,12 +304,13 @@ class MainActivity : Activity() {
 
     private companion object {
         /** Must match ns.TestKeys in addon/ThorCompanion/KeyTest.lua. */
-        val TEST_KEYS = listOf("F9", "CTRL-F9", "SHIFT-F9", "ALT-F9", "CTRL-SHIFT-F9", "NUMPAD5", "CTRL-NUMPAD5")
+        val TEST_KEYS = listOf("CTRL", "ALT").flatMap { mod -> (1..12).map { "$mod-F$it" } } - "ALT-F4"
         val BG = Color.rgb(16, 18, 22)
         val CARD = Color.rgb(36, 40, 48)
         val TEXT = Color.rgb(230, 232, 236)
         val DIM = Color.rgb(140, 146, 156)
         val ACCENT = Color.rgb(255, 196, 64)
+        val GOT = Color.rgb(90, 210, 120)
         val GOLD = Color.rgb(255, 210, 90)
     }
 }

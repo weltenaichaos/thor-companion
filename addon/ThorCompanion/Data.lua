@@ -103,6 +103,8 @@ f:SetScript("OnEvent", function()
     ticker = C_Timer.NewTicker(0.5, function()
         ticks = ticks + 1
         if ticks % REFRESH_TICKS == 0 then sentCount = {} end
+        local test = ns.KeyTestPayload and ns.KeyTestPayload()
+        if test then ns.StripWrite(test) return end
         local ok, p = pcall(payload)
         if not ok then p = "TC1|error|" .. tostring(p) end
         -- Alternate with the state only while names are waiting to be sent.

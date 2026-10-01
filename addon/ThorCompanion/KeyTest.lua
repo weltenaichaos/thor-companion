@@ -1,20 +1,31 @@
 -- KeyTest.lua
 -- Checks which keys the companion app can send into the game. `/thor keytest`
 -- binds the test keys below to a button that only prints the key's name; run it
--- again to give the keys back. Nothing here acts in the game.
+-- again to give the keys back. Nothing here acts in the game. While the test runs,
+-- the strip reports the keys that arrived (TK1|key,key,...) so the app can tick them off.
 
 local _, ns = ...
 
-ns.TestKeys = {
-    "F9", "CTRL-F9", "SHIFT-F9", "ALT-F9", "CTRL-SHIFT-F9",
-    "NUMPAD5", "CTRL-NUMPAD5",
-}
+-- Round 1 on the Thor: CTRL-F9 and ALT-F9 arrived; single keys, SHIFT and the
+-- numpad did not. ALT-F4 is left out: it closes the game window.
+ns.TestKeys = {}
+for _, mod in ipairs({ "CTRL", "ALT" }) do
+    for n = 1, 12 do
+        if not (mod == "ALT" and n == 4) then ns.TestKeys[#ns.TestKeys + 1] = mod .. "-F" .. n end
+    end
+end
+
+local received, receivedList = {}, {}
 
 local owner = CreateFrame("Frame")
 local button = CreateFrame("Button", "ThorCompanionKeyTest", UIParent)
 button:RegisterForClicks("AnyDown")
 button:SetScript("OnClick", function(_, key)
     print("|cff66ccffThor Companion|r key test: got " .. tostring(key))
+    if key and not received[key] then
+        received[key] = true
+        receivedList[#receivedList + 1] = key
+    end
 end)
 
 local active = false
@@ -26,6 +37,7 @@ function ns.KeyTest()
     end
     active = not active
     if active then
+        received, receivedList = {}, {}
         for _, key in ipairs(ns.TestKeys) do
             SetOverrideBindingClick(owner, true, key, "ThorCompanionKeyTest", key)
         end
@@ -34,4 +46,10 @@ function ns.KeyTest()
         ClearOverrideBindings(owner)
         print("|cff66ccffThor Companion|r key test off")
     end
+end
+
+-- What the strip shows while the test runs, or nil when it is off.
+function ns.KeyTestPayload()
+    if not active then return nil end
+    return "TK1|" .. table.concat(receivedList, ",")
 end

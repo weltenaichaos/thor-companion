@@ -29,11 +29,18 @@ local buttons = {}
 local slotKey = {}     -- "bag:slot" -> index into ns.ActionKeys
 local pending = false
 
+local P = "|cff66ccffThor Companion|r "
+
 local function button(i)
     local b = buttons[i]
     if not b then
         b = CreateFrame("Button", "ThorCompanionUse" .. i, UIParent, "SecureActionButtonTemplate")
         b:SetAttribute("type", "item")
+        -- Diagnostics while tap-to-use is being tried out on the Thor: say what arrived.
+        b:HookScript("OnClick", function(self, mouse, down)
+            print(P .. "tap: " .. tostring(ns.ActionKeys[i]) .. " arrived for bag slot " ..
+                tostring(self:GetAttribute("item")) .. " (" .. tostring(mouse) .. ", down=" .. tostring(down) .. ")")
+        end)
         buttons[i] = b
     end
     -- Fire once per press, on whichever edge the game's own buttons use.
@@ -71,6 +78,16 @@ function ns.SlotKey(bag, slot)
     return slotKey[bag .. ":" .. slot]
 end
 
+-- For `/thor taps`: whether the keys are set up, and what the first one does.
+function ns.TapsInfo()
+    local n = 0
+    for _ in pairs(slotKey) do n = n + 1 end
+    local key = ns.ActionKeys[1]
+    return string.format("tap to use %s, %d bag slots have keys, %s does %s, use key down=%s%s",
+        enabled() and "on" or "off", n, key, tostring(GetBindingAction(key, true)),
+        tostring(GetCVarBool("ActionButtonUseKeyDown")), pending and ", waiting for combat to end" or "")
+end
+
 function ns.SetTaps(on)
     ThorCompanionDB.taps = on
     ns.BindSlots()
@@ -80,7 +97,14 @@ local sizes = ""
 owner:RegisterEvent("PLAYER_LOGIN")
 owner:RegisterEvent("BAG_UPDATE_DELAYED")
 owner:RegisterEvent("PLAYER_REGEN_ENABLED")
-owner:SetScript("OnEvent", function(_, event)
+owner:RegisterEvent("ADDON_ACTION_BLOCKED")
+owner:RegisterEvent("ADDON_ACTION_FORBIDDEN")
+owner:SetScript("OnEvent", function(_, event, ...)
+    if event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
+        local addon, fn = ...
+        if addon == "ThorCompanion" then print(P .. "the game blocked " .. tostring(fn) .. " (" .. event .. ")") end
+        return
+    end
     if event == "PLAYER_REGEN_ENABLED" then
         if pending then ns.BindSlots() end
         return

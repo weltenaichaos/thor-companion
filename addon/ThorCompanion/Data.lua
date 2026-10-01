@@ -130,6 +130,8 @@ SlashCmdList.THORCOMPANION = function(msg)
         print("|cff66ccffThor Companion|r strip moved to " .. offset .. " pixels above the bottom edge")
     elseif msg == "info" then
         print("|cff66ccffThor Companion|r " .. ns.StripInfo())
+    elseif msg == "taps" then
+        print("|cff66ccffThor Companion|r " .. ns.TapsInfo())
     elseif msg == "taps on" or msg == "taps off" then
         ns.SetTaps(msg == "taps on")
         print("|cff66ccffThor Companion|r tap to use " .. (msg == "taps on" and "on" or "off") ..

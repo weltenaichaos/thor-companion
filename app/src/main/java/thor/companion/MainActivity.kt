@@ -273,10 +273,17 @@ class MainActivity : Activity() {
                 background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(CARD) }
                 // One tap, one key: the addon bound this key to "use the item in this slot".
                 val key = item.key?.let { ActionKeys.forIndex(it) }
-                if (key != null) setOnClickListener { v ->
+                val label = known?.name ?: "the item"
+                setOnClickListener { v ->
+                    if (key == null) {
+                        status.text = "$label has no tap key yet. Is the new addon loaded? /thor taps in game shows the keys."
+                        return@setOnClickListener
+                    }
                     (v.background as GradientDrawable).setColor(PRESSED)
                     v.postDelayed({ (v.background as GradientDrawable).setColor(CARD) }, 250)
-                    pressKey(key) { err -> status.text = "Couldn't use ${known?.name ?: "the item"}: $err" }
+                    pressKey(key, onDone = { status.text = "Sent $key for $label" }) { err ->
+                        status.text = "Couldn't use $label: $err"
+                    }
                 }
             }
             grid.addView(tile, GridLayout.LayoutParams().apply {

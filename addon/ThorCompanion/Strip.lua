@@ -24,6 +24,7 @@ local DATA = 72
 
 local frame, cells, numCells, perRow
 local seq = 0
+local shown  -- the payload on screen now; the same payload again changes nothing
 
 local function setCell(i, sym)
     local t = cells[i]
@@ -101,6 +102,8 @@ end
 function ns.StripWrite(payload)
     if not cells then build() end
     if #payload > ns.StripCapacity() then payload = payload:sub(1, ns.StripCapacity()) end
+    if payload == shown then return end
+    shown = payload
     seq = (seq + 1) % 64
     setCell(68, seq)
     setCell(69, VERSION)

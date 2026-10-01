@@ -207,6 +207,9 @@ class MainActivity : Activity() {
                 width = 0
                 height = dp(72)
                 columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                // GridLayout lines tiles up by text baseline by default, which pushed
+                // one-line tiles (no stack count) above their neighbours.
+                rowSpec = GridLayout.spec(GridLayout.UNDEFINED, GridLayout.FILL)
                 setMargins(dp(3), dp(3), dp(3), dp(3))
             })
         }

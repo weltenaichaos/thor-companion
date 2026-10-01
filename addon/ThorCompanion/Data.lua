@@ -1,9 +1,10 @@
 -- Data.lua
 -- Collects non-secret, out-of-combat-safe state and hands it to the strip.
--- Every half second the strip shows one frame, alternating between two kinds:
+-- The strip shows one of two kinds of frame, checked every half second:
 --   TC1|name|level|copper|mapID|x|y|free/total|itemID:count,itemID:count,...
 --   TN1|itemID,quality,name<newline>itemID,quality,name...   (names of bag items, a page at a time)
--- The app keeps the names it has seen, so each name only needs to arrive once.
+-- Name pages alternate with the state only until every name has been sent; the app
+-- keeps the names it has seen. The strip is only redrawn when its content changes.
 
 local _, ns = ...
 
@@ -13,7 +14,6 @@ local function plain(v)
 end
 
 local bagIDs, bagQuality = {}, {}  -- distinct item ids in the bags, for the name pages
-local nameNext = 1
 
 local function bagSummary(maxBytes)
     local free, total, items = 0, 0, {}
@@ -61,36 +61,39 @@ local function itemName(id)
     return name
 end
 
--- The next page of names, starting where the last page stopped, or nil when no
--- name is known yet.
-local function namesPayload()
-    local n = #bagIDs
-    if n == 0 then return nil end
+-- Each name is sent twice (so the app surely sees it), then left out until the
+-- minute's refresh, so the strip stays still unless something changes.
+local SENDS = 2
+local REFRESH_TICKS = 120  -- one minute of half-second ticks
+local sentCount = {}
+
+-- The next page of names that still need sending, or nil when there are none.
+-- With peek the page is only built, not counted as sent (for /thor).
+local function namesPayload(peek)
     local room = ns.StripCapacity() - 4
-    local parts, used = {}, 0
-    local start = ((nameNext - 1) % n) + 1
-    nameNext = start
-    for k = 0, n - 1 do
-        local i = ((start - 1 + k) % n) + 1
-        local id = bagIDs[i]
-        local name = itemName(id)
-        if name then
-            local q = bagQuality[id] or C_Item.GetItemQualityByID(id) or 1
-            local entry = id .. "," .. q .. "," .. (name:gsub("\n", " "))
-            if used + #entry + 1 > room then
-                nameNext = i
-                break
+    local parts, ids, used = {}, {}, 0
+    for _, id in ipairs(bagIDs) do
+        if (sentCount[id] or 0) < SENDS then
+            local name = itemName(id)
+            if name then
+                local q = bagQuality[id] or C_Item.GetItemQualityByID(id) or 1
+                local entry = id .. "," .. q .. "," .. (name:gsub("\n", " "))
+                if used + #entry + 1 > room then break end
+                parts[#parts + 1] = entry
+                ids[#ids + 1] = id
+                used = used + #entry + 1
             end
-            parts[#parts + 1] = entry
-            used = used + #entry + 1
         end
-        nameNext = i + 1
     end
     if #parts == 0 then return nil end
+    if not peek then
+        for _, id in ipairs(ids) do sentCount[id] = (sentCount[id] or 0) + 1 end
+    end
     return "TN1|" .. table.concat(parts, "\n")
 end
 
 local ticker, showNames
+local ticks = 0
 local f = CreateFrame("Frame")
 f:RegisterEvent("PLAYER_LOGIN")
 f:SetScript("OnEvent", function()
@@ -98,13 +101,17 @@ f:SetScript("OnEvent", function()
     ns.StripOffset = ThorCompanionDB.offset or 32
     ns.StripShow(ThorCompanionDB.hidden ~= true)
     ticker = C_Timer.NewTicker(0.5, function()
+        ticks = ticks + 1
+        if ticks % REFRESH_TICKS == 0 then sentCount = {} end
+        local ok, p = pcall(payload)
+        if not ok then p = "TC1|error|" .. tostring(p) end
+        -- Alternate with the state only while names are waiting to be sent.
         showNames = not showNames
         if showNames then
-            local ok, p = pcall(namesPayload)
-            if ok and p then ns.StripWrite(p) return end
+            local okNames, names = pcall(namesPayload)
+            if okNames and names then ns.StripWrite(names) return end
         end
-        local ok, p = pcall(payload)
-        ns.StripWrite(ok and p or ("TC1|error|" .. tostring(p)))
+        ns.StripWrite(p)
     end)
 end)
 
@@ -125,7 +132,7 @@ SlashCmdList.THORCOMPANION = function(msg)
         local ok, p = pcall(payload)
         print("|cff66ccffThor Companion|r strip capacity " .. ns.StripCapacity() .. " bytes")
         print(ok and p or ("error: " .. tostring(p)))
-        local okNames, names = pcall(namesPayload)
-        print(okNames and (names or "no item names loaded yet") or ("error: " .. tostring(names)))
+        local okNames, names = pcall(namesPayload, true)
+        print(okNames and (names or "all item names sent") or ("error: " .. tostring(names)))
     end
 end

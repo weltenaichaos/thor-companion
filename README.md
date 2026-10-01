@@ -11,7 +11,7 @@ later on will be one key press per tap.
 ## How it works
 
 1. The **ThorCompanion addon** (`addon/ThorCompanion`) draws a thin strip of coloured
-   cells near the bottom of the game screen, twice a second. The strip carries
+   cells near the bottom of the game screen. It only changes when the data does. The strip carries
    the data: name, level, gold, map position, bag slots and bag contents, and in
    alternate frames the names of the items in your bags.
 2. The **app** (`app/`) runs on the bottom screen. It captures the top screen a

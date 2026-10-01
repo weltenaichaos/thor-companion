@@ -30,6 +30,14 @@ local slotKey = {}     -- "bag:slot" -> index into ns.ActionKeys
 local pending = false
 
 local P = "|cff66ccffThor Companion|r "
+local lastTap = 0
+
+-- Points a slot's button at its item, or at nothing when the slot is empty: the
+-- game's item button raises a Lua error when told to use an empty slot.
+local function aim(b, bag, slot)
+    local info = C_Container.GetContainerItemInfo(bag, slot)
+    b:SetAttribute("item", info and (bag .. " " .. slot) or nil)
+end
 
 local function button(i)
     local b = buttons[i]
@@ -38,8 +46,12 @@ local function button(i)
         b:SetAttribute("type", "item")
         -- Diagnostics while tap-to-use is being tried out on the Thor: say what arrived.
         b:HookScript("OnClick", function(self, mouse, down)
-            print(P .. "tap: " .. tostring(ns.ActionKeys[i]) .. " arrived for bag slot " ..
-                tostring(self:GetAttribute("item")) .. " (" .. tostring(mouse) .. ", down=" .. tostring(down) .. ")")
+            lastTap = GetTime()
+            local item = self:GetAttribute("item")
+            local bag, slot = (item or ""):match("^(%d+) (%d+)$")
+            local link = bag and C_Container.GetContainerItemLink(tonumber(bag), tonumber(slot))
+            print(P .. "tap: " .. tostring(ns.ActionKeys[i]) .. " arrived for bag slot " .. tostring(item) ..
+                " " .. tostring(link) .. " (" .. tostring(mouse) .. ", down=" .. tostring(down) .. ")")
         end)
         buttons[i] = b
     end
@@ -66,7 +78,7 @@ function ns.BindSlots()
             local key = ns.ActionKeys[i]
             if not key then return end
             local b = button(i)
-            b:SetAttribute("item", bag .. " " .. slot)
+            aim(b, bag, slot)
             SetOverrideBindingClick(owner, true, key, b:GetName())
             slotKey[bag .. ":" .. slot] = i
         end
@@ -99,10 +111,17 @@ owner:RegisterEvent("BAG_UPDATE_DELAYED")
 owner:RegisterEvent("PLAYER_REGEN_ENABLED")
 owner:RegisterEvent("ADDON_ACTION_BLOCKED")
 owner:RegisterEvent("ADDON_ACTION_FORBIDDEN")
+owner:RegisterEvent("UI_ERROR_MESSAGE")
 owner:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
         local addon, fn = ...
         if addon == "ThorCompanion" then print(P .. "the game blocked " .. tostring(fn) .. " (" .. event .. ")") end
+        return
+    end
+    if event == "UI_ERROR_MESSAGE" then
+        -- Diagnostics: the game's red error text right after a tap (out of range, level too low, ...).
+        local _, text = ...
+        if GetTime() - lastTap < 2 then print(P .. "the game said: " .. tostring(text)) end
         return
     end
     if event == "PLAYER_REGEN_ENABLED" then
@@ -116,5 +135,14 @@ owner:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_LOGIN" or now ~= sizes then
         sizes = now
         ns.BindSlots()
+    elseif InCombatLockdown() then
+        pending = true -- an item may have run out; re-aim the buttons after combat
+    else
+        for bag = 0, 4 do
+            for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
+                local i = slotKey[bag .. ":" .. slot]
+                if i then aim(buttons[i], bag, slot) end
+            end
+        end
     end
 end)

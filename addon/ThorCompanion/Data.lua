@@ -1,7 +1,8 @@
 -- Data.lua
 -- Collects non-secret, out-of-combat-safe state and hands it to the strip.
 -- The strip shows one of two kinds of frame, checked every half second:
---   TC1|name|level|copper|mapID|x|y|free/total|itemID:count,itemID:count,...
+--   TC1|name|level|copper|mapID|x|y|free/total|itemID:count:key,itemID:count:key,...
+--   (key: the slot's tap key, an index into ns.ActionKeys; left out when unbound)
 --   TN1|itemID,quality,name<newline>itemID,quality,name...   (names of bag items, a page at a time)
 -- Name pages alternate with the state only until every name has been sent; the app
 -- keeps the names it has seen. The strip is only redrawn when its content changes.
@@ -25,7 +26,8 @@ local function bagSummary(maxBytes)
         for slot = 1, n do
             local info = C_Container.GetContainerItemInfo(bag, slot)
             if info and info.itemID then
-                items[#items + 1] = info.itemID .. ":" .. (info.stackCount or 1)
+                local key = ns.SlotKey and ns.SlotKey(bag, slot)
+                items[#items + 1] = info.itemID .. ":" .. (info.stackCount or 1) .. (key and (":" .. key) or "")
                 if not seen[info.itemID] then
                     seen[info.itemID] = true
                     ids[#ids + 1] = info.itemID
@@ -36,7 +38,8 @@ local function bagSummary(maxBytes)
     end
     bagIDs, bagQuality = ids, quality
     local list = table.concat(items, ",")
-    if #list > maxBytes then list = list:sub(1, maxBytes) end
+    -- Too long for the strip: cut at an entry boundary, so no entry (and no tap key) is cut short.
+    if #list > maxBytes then list = list:sub(1, maxBytes):match("^(.*),") or "" end
     return free, total, list
 end
 
@@ -127,6 +130,10 @@ SlashCmdList.THORCOMPANION = function(msg)
         print("|cff66ccffThor Companion|r strip moved to " .. offset .. " pixels above the bottom edge")
     elseif msg == "info" then
         print("|cff66ccffThor Companion|r " .. ns.StripInfo())
+    elseif msg == "taps on" or msg == "taps off" then
+        ns.SetTaps(msg == "taps on")
+        print("|cff66ccffThor Companion|r tap to use " .. (msg == "taps on" and "on" or "off") ..
+            (InCombatLockdown() and " (after combat)" or ""))
     elseif msg == "keytest" then
         ns.KeyTest()
     elseif msg == "hide" or msg == "show" then

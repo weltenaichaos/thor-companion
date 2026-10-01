@@ -33,6 +33,9 @@ when the game starts. In game:
 - `/thor info` shows where the strip is drawn.
 - `/thor offset N` moves the strip N pixels up from the bottom edge (default 32).
 - `/thor hide` and `/thor show` turn the strip off and on.
+- `/thor taps off` and `/thor taps on` turn tap-to-use off and on (default on). With it on,
+  every bag slot has its own key (CTRL-F1 and up), bound out of combat, and tapping an
+  item in the app's Bags tab presses that one key, which uses the item.
 - `/thor keytest` binds the CTRL and ALT function keys to a button that only prints their name, to check that
   the app's Keys tab reaches the game (keys that arrive turn green in the app). Run it again to give the keys back.
 

@@ -1,11 +1,11 @@
 package thor.companion.strip
 
-/** One bag stack: item id and how many. */
-data class BagItem(val itemId: Int, val count: Int)
+/** One bag stack: item id, how many, and the slot's tap key (an [ActionKeys] index) if it has one. */
+data class BagItem(val itemId: Int, val count: Int, val key: Int? = null)
 
 /**
  * What the addon reports, parsed from the payload
- * `TC1|name|level|copper|mapID|x|y|free/total|itemID:count,...` (see addon/ThorCompanion/Data.lua).
+ * `TC1|name|level|copper|mapID|x|y|free/total|itemID:count[:key],...` (see addon/ThorCompanion/Data.lua).
  * Values the game keeps secret arrive as "?" and come out as null.
  */
 data class GameState(
@@ -30,10 +30,10 @@ data class GameState(
             if (f.size < 9 || f[0] != "TC1") return null
             val slots = f[7].split('/')
             val items = f[8].split(',').mapNotNull { entry ->
-                val (id, count) = entry.split(':').takeIf { it.size == 2 } ?: return@mapNotNull null
-                val itemId = id.toIntOrNull() ?: return@mapNotNull null
-                // The addon trims the list to fit the strip, so the last entry can be cut short.
-                BagItem(itemId, count.toIntOrNull() ?: return@mapNotNull null)
+                val p = entry.split(':').takeIf { it.size in 2..3 } ?: return@mapNotNull null
+                val itemId = p[0].toIntOrNull() ?: return@mapNotNull null
+                // The addon cuts the list at an entry boundary when it is too long for the strip.
+                BagItem(itemId, p[1].toIntOrNull() ?: return@mapNotNull null, p.getOrNull(2)?.let { it.toIntOrNull() ?: return@mapNotNull null })
             }
             return GameState(
                 name = f[1],

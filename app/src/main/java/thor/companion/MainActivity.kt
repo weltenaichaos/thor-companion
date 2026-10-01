@@ -13,6 +13,7 @@ import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import thor.companion.strip.ActionKeys
 import thor.companion.strip.GameState
 import thor.companion.strip.ItemNames
 import thor.companion.strip.StripDecoder
@@ -38,6 +39,8 @@ class MainActivity : Activity() {
     private var keyResult = ""
 
     @Volatile private var worker: Thread? = null
+    /** Key presses go out one at a time, in the order they were tapped. */
+    private val keys = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -215,14 +218,10 @@ class MainActivity : Activity() {
                 setTextColor(if (got) Color.BLACK else TEXT)
                 background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(if (got) GOT else CARD) }
                 setOnClickListener {
-                    val target = gameDisplay()
-                    Thread {
-                        val err = KeySender.send(this@MainActivity, target, key)
-                        runOnUiThread {
-                            keyResult = if (err == null) "Sent $key to screen $target" else "$key: $err"
-                            result.text = keyResult
-                        }
-                    }.start()
+                    pressKey(key, onDone = { keyResult = "Sent $key"; result.text = keyResult }) { err ->
+                        keyResult = "$key: $err"
+                        result.text = keyResult
+                    }
                 }
             }
             grid.addView(b, GridLayout.LayoutParams().apply {
@@ -235,6 +234,15 @@ class MainActivity : Activity() {
         }
         content.addView(grid)
         content.addView(result)
+    }
+
+    /** Sends one key to the game's screen; the callbacks run on the UI thread. */
+    private fun pressKey(key: String, onDone: () -> Unit = {}, onError: (String) -> Unit) {
+        val target = gameDisplay()
+        keys.execute {
+            val err = KeySender.send(this, target, key)
+            runOnUiThread { if (err == null) onDone() else onError(err) }
+        }
     }
 
     /** The other screen: the one this app is not on. */
@@ -263,6 +271,13 @@ class MainActivity : Activity() {
                 setTextColor(if (known != null) qualityColour(known.quality) else DIM)
                 textSize = 12f
                 background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(CARD) }
+                // One tap, one key: the addon bound this key to "use the item in this slot".
+                val key = item.key?.let { ActionKeys.forIndex(it) }
+                if (key != null) setOnClickListener { v ->
+                    (v.background as GradientDrawable).setColor(PRESSED)
+                    v.postDelayed({ (v.background as GradientDrawable).setColor(CARD) }, 250)
+                    pressKey(key) { err -> status.text = "Couldn't use ${known?.name ?: "the item"}: $err" }
+                }
             }
             grid.addView(tile, GridLayout.LayoutParams().apply {
                 width = 0
@@ -276,6 +291,7 @@ class MainActivity : Activity() {
         }
         content.addView(grid)
         if (s.items.isEmpty()) content.addView(line("Your bags are empty.", DIM))
+        else if (s.items.any { it.key != null }) content.addView(line("Tap an item to use it.", DIM))
     }
 
     /** WoW's item quality colours. */
@@ -314,6 +330,7 @@ class MainActivity : Activity() {
         val DIM = Color.rgb(140, 146, 156)
         val ACCENT = Color.rgb(255, 196, 64)
         val GOT = Color.rgb(90, 210, 120)
+        val PRESSED = Color.rgb(70, 78, 92)
         val GOLD = Color.rgb(255, 210, 90)
     }
 }

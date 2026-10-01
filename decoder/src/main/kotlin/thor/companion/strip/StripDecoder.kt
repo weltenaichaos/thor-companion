@@ -153,23 +153,34 @@ object StripDecoder {
                 wantGreen = !wantGreen
                 if (found == 4) {
                     val cell = (starts[3] - starts[0]) / 3.0
-                    return if (cell >= 2) starts[0] to cell else null
+                    // Real sync cells are evenly spaced; data cells that happen to be
+                    // magenta and green rarely are.
+                    val slack = maxOf(1.5, cell / 4)
+                    val even = (1..3).all { Math.abs(starts[it] - starts[it - 1] - cell) <= slack }
+                    return if (cell >= 2 && even) starts[0] to cell else null
                 }
             }
         }
         return null
     }
 
+    private fun sameSync(a: Pair<Int, Double>, b: Pair<Int, Double>) =
+        Math.abs(a.first - b.first) <= 1 && Math.abs(a.second - b.second) <= 1.0
+
     /** (x of first cell, middle y of the bottom cell row, cell size) or null. */
     private fun findStrip(px: Pixels): Triple<Int, Int, Double>? {
         var first = -1
+        var firstSync: Pair<Int, Double>? = null
         var y = px.height - 1
         val stop = maxOf(px.height - SCAN_ROWS, -1)
         while (y > stop) {
             val found = syncAt(px, y)
             if (found != null && first < 0) {
                 first = y
-            } else if (found == null && first >= 0) {
+                firstSync = found
+            } else if (first >= 0 && (found == null || !sameSync(found, firstSync!!))) {
+                // The row above the sync cells ends the block, even when its own
+                // cells look like a sync at another place or size.
                 val mid = (first + y + 1) / 2 // edge rows are blended; use the middle
                 val (x0, cell) = syncAt(px, mid) ?: return null
                 return Triple(x0, mid, cell)

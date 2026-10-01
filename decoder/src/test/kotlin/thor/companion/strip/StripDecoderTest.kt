@@ -40,6 +40,16 @@ class StripDecoderTest {
         assertEquals(7, frame.seq)
     }
 
+    /** Unshifted colours: data cells above the sync can look like another sync and must not move it. */
+    @Test
+    fun ignoresSyncLookalikesAboveTheStrip() {
+        val names = "TN1|" + (1..20).joinToString("\n") { "${6948 + it},${it % 5},Item é $it" }
+        val px = render(names, seq = 3, shiftColours = false)
+        val frame = assertIs<StripDecoder.Result.Ok>(StripDecoder.decode(px)).frame
+        assertTrue(frame.crcOk)
+        assertEquals(names, frame.payload)
+    }
+
     @Test
     fun reportsBadCrc() {
         val px = render("TC1|x|1|0|0|0|0|0/0|", seq = 1, flipCell = StripDecoder.DATA + 2)
@@ -58,7 +68,7 @@ class StripDecoderTest {
      * way the Thor does: 1.5x upscale to 1920 wide, colours pushed through a shifting
      * matrix, and the bottom rows cropped.
      */
-    private fun render(payload: String, seq: Int, flipCell: Int = -1): Pixels {
+    private fun render(payload: String, seq: Int, flipCell: Int = -1, shiftColours: Boolean = true): Pixels {
         val gw = 1280; val gh = 720; val cell = 6; val offset = 32
         val perRow = gw / cell
         val syms = IntArray(perRow * StripDecoder.ROWS)
@@ -94,7 +104,7 @@ class StripDecoderTest {
         val sw = 1920; val sh = 1058
         val screen = IntArray(sw * sh) { idx ->
             val sx = idx % sw; val sy = idx / sw
-            shift(game[(sy * gh / 1080) * gw + sx * gw / sw])
+            game[(sy * gh / 1080) * gw + sx * gw / sw].let { if (shiftColours) shift(it) else it }
         }
         return ArrayPixels(sw, sh, screen)
     }

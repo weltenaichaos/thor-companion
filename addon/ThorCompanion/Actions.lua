@@ -44,8 +44,14 @@ local function button(i)
     if not b then
         b = CreateFrame("Button", "ThorCompanionUse" .. i, UIParent, "SecureActionButtonTemplate")
         b:SetAttribute("type", "item")
+        -- Use the item on key release, always. Otherwise the game decides by the
+        -- ActionButtonUseKeyDown setting, which can differ from what it was when the
+        -- button was made, and then ignores the edge that arrives (seen on the Thor).
+        b:SetAttribute("useOnKeyDown", false)
+        b:RegisterForClicks("AnyUp", "AnyDown")
         -- Diagnostics while tap-to-use is being tried out on the Thor: say what arrived.
         b:HookScript("OnClick", function(self, mouse, down)
+            if down then return end -- the item is used on release; report that one
             lastTap = GetTime()
             local item = self:GetAttribute("item")
             local bag, slot = (item or ""):match("^(%d+) (%d+)$")
@@ -55,8 +61,6 @@ local function button(i)
         end)
         buttons[i] = b
     end
-    -- Fire once per press, on whichever edge the game's own buttons use.
-    b:RegisterForClicks(GetCVarBool("ActionButtonUseKeyDown") and "AnyDown" or "AnyUp")
     return b
 end
 
@@ -95,7 +99,7 @@ function ns.TapsInfo()
     local n = 0
     for _ in pairs(slotKey) do n = n + 1 end
     local key = ns.ActionKeys[1]
-    return string.format("tap to use %s, %d bag slots have keys, %s does %s, use key down=%s%s",
+    return string.format("tap to use %s, %d bag slots have keys, %s does %s, game uses keys on press=%s%s",
         enabled() and "on" or "off", n, key, tostring(GetBindingAction(key, true)),
         tostring(GetCVarBool("ActionButtonUseKeyDown")), pending and ", waiting for combat to end" or "")
 end

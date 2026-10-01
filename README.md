@@ -33,6 +33,8 @@ when the game starts. In game:
 - `/thor info` shows where the strip is drawn.
 - `/thor offset N` moves the strip N pixels up from the bottom edge (default 32).
 - `/thor hide` and `/thor show` turn the strip off and on.
+- `/thor keytest` binds a few test keys that only print their name, to check that
+  the app's Keys tab reaches the game. Run it again to give the keys back.
 
 **App:** each build on GitHub Actions uploads a debug APK
 (`thor-companion-debug-apk`). Install it and open it on the bottom screen.

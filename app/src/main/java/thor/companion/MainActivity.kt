@@ -24,7 +24,7 @@ import java.util.Locale
  */
 class MainActivity : Activity() {
 
-    private enum class Panel(val title: String) { BAGS("Bags"), CHARACTER("Character"), MAP("Map"), CHAT("Chat") }
+    private enum class Panel(val title: String) { BAGS("Bags"), CHARACTER("Character"), MAP("Map"), CHAT("Chat"), KEYS("Keys") }
 
     private lateinit var screen: TopScreen
     private lateinit var names: NameStore
@@ -53,7 +53,7 @@ class MainActivity : Activity() {
             val b = Button(this).apply {
                 text = p.title
                 isAllCaps = false
-                textSize = 16f
+                textSize = 15f
                 setOnClickListener { show(p) }
             }
             tabs[p] = b
@@ -127,7 +127,7 @@ class MainActivity : Activity() {
         if (seq == lastSeq && parsed == state) return
         lastSeq = seq
         state = parsed
-        render()
+        if (panel != Panel.KEYS) render()
     }
 
     private fun onNames(changed: Boolean) {
@@ -160,6 +160,10 @@ class MainActivity : Activity() {
 
     private fun render() {
         content.removeAllViews()
+        if (panel == Panel.KEYS) {
+            renderKeys()
+            return
+        }
         val s = state
         if (s == null) {
             content.addView(line("Waiting for the game…", DIM))
@@ -180,7 +184,46 @@ class MainActivity : Activity() {
                 content.addView(line("The map picture comes in a later version.", DIM))
             }
             Panel.CHAT -> content.addView(line("Chat comes in a later version.", DIM))
+            Panel.KEYS -> {}
         }
+    }
+
+    /** Key test: each button sends one key to the game's screen; `/thor keytest` in game prints what arrives. */
+    private fun renderKeys() {
+        content.addView(line("Type /thor keytest in the game, then tap a key. The game's chat should say which key it got.", DIM))
+        val result = line("", TEXT)
+        val grid = GridLayout(this).apply { columnCount = 3 }
+        for (key in TEST_KEYS) {
+            val b = Button(this).apply {
+                text = key
+                isAllCaps = false
+                setTextColor(TEXT)
+                background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(CARD) }
+                setOnClickListener {
+                    val target = gameDisplay()
+                    Thread {
+                        val err = KeySender.send(target, key)
+                        runOnUiThread { result.text = if (err == null) "Sent $key to screen $target" else "$key: $err" }
+                    }.start()
+                }
+            }
+            grid.addView(b, GridLayout.LayoutParams().apply {
+                width = 0
+                height = dp(56)
+                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                rowSpec = GridLayout.spec(GridLayout.UNDEFINED, GridLayout.FILL)
+                setMargins(dp(3), dp(3), dp(3), dp(3))
+            })
+        }
+        content.addView(grid)
+        content.addView(result)
+    }
+
+    /** The other screen: the one this app is not on. */
+    private fun gameDisplay(): Int {
+        val here = display?.displayId ?: 0
+        val dm = getSystemService(android.hardware.display.DisplayManager::class.java)
+        return dm.displays.map { it.displayId }.firstOrNull { it != here } ?: 0
     }
 
     private fun renderBags(s: GameState) {
@@ -244,6 +287,8 @@ class MainActivity : Activity() {
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     private companion object {
+        /** Must match ns.TestKeys in addon/ThorCompanion/KeyTest.lua. */
+        val TEST_KEYS = listOf("F9", "CTRL-F9", "SHIFT-F9", "ALT-F9", "CTRL-SHIFT-F9", "NUMPAD5", "CTRL-NUMPAD5")
         val BG = Color.rgb(16, 18, 22)
         val CARD = Color.rgb(36, 40, 48)
         val TEXT = Color.rgb(230, 232, 236)

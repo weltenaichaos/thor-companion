@@ -125,6 +125,8 @@ SlashCmdList.THORCOMPANION = function(msg)
         print("|cff66ccffThor Companion|r strip moved to " .. offset .. " pixels above the bottom edge")
     elseif msg == "info" then
         print("|cff66ccffThor Companion|r " .. ns.StripInfo())
+    elseif msg == "keytest" then
+        ns.KeyTest()
     elseif msg == "hide" or msg == "show" then
         ThorCompanionDB.hidden = (msg == "hide")
         ns.StripShow(msg == "show")

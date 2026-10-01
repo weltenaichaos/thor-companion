@@ -1,8 +1,9 @@
 ## Interface: 16001
 ## Title: Thor Companion
 ## Notes: Draws a thin data strip along the bottom edge of the screen for the Ayn Thor bottom-screen companion. Read-only: never casts, moves, buys or talks.
-## Version: 0.2.0
+## Version: 0.3.0
 ## SavedVariables: ThorCompanionDB
 
 Strip.lua
 Data.lua
+KeyTest.lua

@@ -3,6 +3,9 @@ package thor.companion
 /**
  * Sends one key (or one key with modifiers, like CTRL-F9) to a display, as root
  * through the system `input` tool. One call is one key press.
+ *
+ * On the Thor only one screen has key focus at a time, and a touch on the other
+ * screen can take it, so the game's screen gets the focus back first ([FocusTool]).
  */
 object KeySender {
     private val codes = mapOf(
@@ -13,11 +16,14 @@ object KeySender {
         (0..9).associate { "NUMPAD$it" to "KEYCODE_NUMPAD_$it" }
 
     /** Sends [key] in WoW's notation (e.g. "CTRL-SHIFT-F9"); returns what went wrong, or null. */
-    fun send(displayId: Int, key: String): String? {
+    fun send(context: android.content.Context, displayId: Int, key: String): String? {
         val keys = key.split('-').map { codes[it] ?: return "unknown key $it" }
         val cmd = if (keys.size == 1) "input -d $displayId keyevent ${keys[0]}"
             else "input -d $displayId keycombination ${keys.joinToString(" ")}"
+        val apk = context.applicationInfo.sourceDir
+        val focus = "CLASSPATH=${RootShell.quote(apk)} app_process /system/bin thor.companion.FocusTool $displayId"
+        val focused = RootShell.exec("$focus 2>&1")?.trim() ?: return "root service not reachable"
         val out = RootShell.exec("$cmd 2>&1") ?: return "root service not reachable"
-        return out.trim().takeIf { it.isNotEmpty() }
+        return out.trim().takeIf { it.isNotEmpty() } ?: focused.takeIf { !it.startsWith("OK") }?.let { "sent, but focus: $it" }
     }
 }

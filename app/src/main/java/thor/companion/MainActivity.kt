@@ -41,6 +41,8 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Taps here must not take the key focus (or the controller) away from the game.
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
         screen = TopScreen(this)
         names = NameStore(this)
         screen.displayId = getPreferences(MODE_PRIVATE).getString("display", null)
@@ -202,7 +204,7 @@ class MainActivity : Activity() {
 
     /** Key test: each button sends one key to the game's screen; `/thor keytest` in game prints what arrives. */
     private fun renderKeys() {
-        content.addView(line("Type /thor keytest in the game, then tap each key once. Keys the game reports back turn green.", DIM))
+        content.addView(line("Type /thor keytest in the game, then tap each key once. Keys the game reports back turn green. Each tap first gives the game screen the key focus.", DIM))
         val result = line(keyResult, TEXT)
         val grid = GridLayout(this).apply { columnCount = 4 }
         for (key in TEST_KEYS) {
@@ -215,7 +217,7 @@ class MainActivity : Activity() {
                 setOnClickListener {
                     val target = gameDisplay()
                     Thread {
-                        val err = KeySender.send(target, key)
+                        val err = KeySender.send(this@MainActivity, target, key)
                         runOnUiThread {
                             keyResult = if (err == null) "Sent $key to screen $target" else "$key: $err"
                             result.text = keyResult

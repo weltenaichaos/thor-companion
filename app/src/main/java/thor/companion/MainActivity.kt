@@ -204,7 +204,7 @@ class MainActivity : Activity() {
 
     /** Key test: each button sends one key to the game's screen; `/thor keytest` in game prints what arrives. */
     private fun renderKeys() {
-        content.addView(line("Type /thor keytest in the game, then tap each key once. Keys the game reports back turn green. Each tap first gives the game screen the key focus.", DIM))
+        content.addView(line("Type /thor keytest in the game, then tap each key once. Keys the game reports back turn green.", DIM))
         val result = line(keyResult, TEXT)
         val grid = GridLayout(this).apply { columnCount = 4 }
         for (key in TEST_KEYS) {
@@ -306,7 +306,8 @@ class MainActivity : Activity() {
 
     private companion object {
         /** Must match ns.TestKeys in addon/ThorCompanion/KeyTest.lua. */
-        val TEST_KEYS = listOf("CTRL", "ALT").flatMap { mod -> (1..12).map { "$mod-F$it" } } - "ALT-F4"
+        val TEST_KEYS = listOf("CTRL", "ALT").flatMap { mod -> (1..12).map { "$mod-F$it" } } - "ALT-F4" +
+            listOf("F9", "SHIFT-F9", "CTRL-SHIFT-F9", "NUMPAD5")
         val BG = Color.rgb(16, 18, 22)
         val CARD = Color.rgb(36, 40, 48)
         val TEXT = Color.rgb(230, 232, 236)

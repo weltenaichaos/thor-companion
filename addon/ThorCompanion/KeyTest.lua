@@ -6,13 +6,18 @@
 
 local _, ns = ...
 
--- Round 1 on the Thor: CTRL-F9 and ALT-F9 arrived; single keys, SHIFT and the
--- numpad did not. ALT-F4 is left out: it closes the game window.
+-- On the Thor so far: CTRL-F5..F12 arrive (once the game keeps the key focus).
+-- The others are tested again with the app's own key injection.
+-- ALT-F4 is left out: it closes the game window.
 ns.TestKeys = {}
 for _, mod in ipairs({ "CTRL", "ALT" }) do
     for n = 1, 12 do
         if not (mod == "ALT" and n == 4) then ns.TestKeys[#ns.TestKeys + 1] = mod .. "-F" .. n end
     end
+end
+
+for _, key in ipairs({ "F9", "SHIFT-F9", "CTRL-SHIFT-F9", "NUMPAD5" }) do
+    ns.TestKeys[#ns.TestKeys + 1] = key
 end
 
 local received, receivedList = {}, {}

@@ -10,18 +10,19 @@ later on will be one key press per tap.
 
 ## How it works
 
-1. The **ThorCompanion addon** (`addon/ThorCompanion`) draws a thin strip of coloured
-   cells near the bottom of the game screen. It only changes when the data does. The strip carries
-   the data: name, level, gold, map position, bag slots and bag contents, and in
-   alternate frames the names of the items in your bags.
+1. The **ThorCompanion addon** (`addon/ThorCompanion`) draws a small square of dark
+   grey cells in the top-right corner of the game screen. It carries the data: name,
+   level, gold, map position, bag slots and bag contents, and the names of the items
+   in your bags. It only changes when the data does; a longer message (the bags) is
+   split into parts that are shown in turn.
 2. The **app** (`app/`) runs on the bottom screen. It captures the top screen a
-   few times a second, reads the strip and draws the panels.
+   few times a second, reads the square and draws the panels.
 3. The **decoder** (`decoder/`) is plain Kotlin that the app uses. It is tested
-   against a real Thor screenshot.
+   against a square drawn by the addon, upscaled and colour-shifted like on the Thor.
 
-The Thor shifts colours and scales the game up, so the strip carries its own
-64-colour calibration and a checksum in every frame. `addon/ThorCompanion/Strip.lua`
-describes the layout.
+The app reads the game's picture directly, so four shades close to black are enough.
+The Thor shifts colours and scales the game up, so every square carries its own
+calibration shades and a checksum. `addon/ThorCompanion/Strip.lua` describes the layout.
 
 ## Install
 
@@ -29,10 +30,17 @@ describes the layout.
 Thor Forever Reforged, put it in `Download/Thor-Forever/AddOns` and it is copied in
 when the game starts. In game:
 
-- `/thor` shows the data being sent (state and the next page of item names).
-- `/thor info` shows where the strip is drawn.
-- `/thor offset N` moves the strip N pixels up from the bottom edge (default 32).
-- `/thor hide` and `/thor show` turn the strip off and on.
+- `/thor` shows the data being sent (state, bags and the next page of item names).
+- `/thor info` shows where the square is drawn and its settings.
+- `/thor pos RIGHT TOP` moves the square: its distance in game pixels from the right
+  and top edges (default 0 22, just under the zone name and clock).
+- `/thor cell N` sets the cell size in game pixels, 2 to 8 (default 3; the square is
+  20 cells wide).
+- `/thor shade N` sets how far apart the four shades are, 4 to 80 (default 24; the
+  lightest is 3 × N out of 255). Lower is darker and harder for the app to read.
+- `/thor shape line` draws the same cells as one thin line along the top edge instead;
+  `/thor shape square` goes back.
+- `/thor hide` and `/thor show` turn the square off and on.
 - `/thor taps off` and `/thor taps on` turn tap-to-use off and on (default on). With it on,
   every bag slot has its own key (CTRL-F1 and up), bound out of combat, and tapping an
   item in the app's Bags tab presses that one key, which uses the item.
@@ -53,4 +61,5 @@ screen, long-press the status line to switch to the next screen.
 ./gradlew :app:assembleDebug     # needs the Android SDK
 ```
 
-`tools/decode_strip.py screenshot.png` decodes a screenshot on a PC (needs Pillow).
+`tools/decode_strip.py screenshot.png [more.png ...]` decodes screenshots on a PC
+(needs Pillow) and puts split messages back together.

@@ -1,11 +1,12 @@
 -- Data.lua
 -- Collects non-secret, out-of-combat-safe state and hands it to the strip.
--- The strip shows one of two kinds of frame, checked every half second:
---   TC1|name|level|copper|mapID|x|y|free/total|itemID:count:key,itemID:count:key,...
+-- Three kinds of message, checked every half second, each sent only when it changed:
+--   TS1|name|level|copper|mapID|x|y                         (small, changes while walking)
+--   TB1|free/total|itemID:count:key,itemID:count:key,...    (the bags)
 --   (key: the slot's tap key, an index into ns.ActionKeys; left out when unbound)
 --   TN1|itemID,quality,name<newline>itemID,quality,name...   (names of bag items, a page at a time)
--- Name pages alternate with the state only until every name has been sent; the app
--- keeps the names it has seen. The strip is only redrawn when its content changes.
+-- The app keeps the names it has seen. State and bags are sent again every five
+-- minutes and names every half hour, for an app that started after the game.
 
 local _, ns = ...
 
@@ -43,7 +44,7 @@ local function bagSummary(maxBytes)
     return free, total, list
 end
 
-local function payload()
+local function status()
     local name = plain(UnitName("player")) or "?"
     local level = plain(UnitLevel("player")) or 0
     local mapID = C_Map.GetBestMapForUnit("player")
@@ -52,10 +53,13 @@ local function payload()
         local pos = C_Map.GetPlayerMapPosition(mapID, "player")
         if pos then x, y = pos:GetXY() end
     end
-    local head = string.format("TC1|%s|%s|%d|%d|%.4f|%.4f|", tostring(name), tostring(level),
+    return string.format("TS1|%s|%s|%d|%d|%.4f|%.4f", tostring(name), tostring(level),
         GetMoney() or 0, mapID or 0, x or 0, y or 0)
-    local free, total, list = bagSummary(ns.StripCapacity() - #head - 16)
-    return head .. free .. "/" .. total .. "|" .. list
+end
+
+local function bags()
+    local free, total, list = bagSummary(ns.StripCapacity() - 16)
+    return "TB1|" .. free .. "/" .. total .. "|" .. list
 end
 
 local function itemName(id)
@@ -65,9 +69,11 @@ local function itemName(id)
 end
 
 -- Each name is sent twice (so the app surely sees it), then left out until the
--- minute's refresh, so the strip stays still unless something changes.
+-- half-hourly refresh, so the square stays still unless something changes.
 local SENDS = 2
-local REFRESH_TICKS = 120  -- one minute of half-second ticks
+local REFRESH_TICKS = 600       -- five minutes: state and bags again, for an app started late
+local NAMES_REFRESH_TICKS = 3600 -- half an hour: names again (the app keeps the ones it has)
+local MOVE_SECONDS = 1.5         -- while walking, the position is sent at most this often
 local sentCount = {}
 
 -- The next page of names that still need sending, or nil when there are none.
@@ -95,39 +101,81 @@ local function namesPayload(peek)
     return "TN1|" .. table.concat(parts, "\n")
 end
 
-local ticker, showNames
+-- The kinds take turns; one that has not changed since it was last sent is skipped.
+local kinds = { status, bags, namesPayload }
+local lastSent = {}
+local turn = 0
+local statusAt = 0
+
+-- The status line without its position, to tell walking from other changes.
+local function withoutPosition(p)
+    return p and (p:match("^(.*)|[^|]*|[^|]*$") or p)
+end
+
+local function nextMessage()
+    for _ = 1, #kinds do
+        turn = turn % #kinds + 1
+        local ok, p = pcall(kinds[turn])
+        if not ok then p = "TS1|error|" .. tostring(p) end
+        -- Every change redraws the square, so a moving position is sent only now and then.
+        if turn == 1 and p and lastSent[1] and withoutPosition(p) == withoutPosition(lastSent[1])
+            and GetTime() - statusAt < MOVE_SECONDS then
+            p = lastSent[1]
+        end
+        if p and p ~= lastSent[turn] then
+            if turn == 1 then statusAt = GetTime() end
+            lastSent[turn] = p
+            return p
+        end
+    end
+end
+
+local ticker
 local ticks = 0
 local f = CreateFrame("Frame")
 f:RegisterEvent("PLAYER_LOGIN")
 f:SetScript("OnEvent", function()
     ThorCompanionDB = ThorCompanionDB or {}
-    ns.StripOffset = ThorCompanionDB.offset or 32
     ns.StripShow(ThorCompanionDB.hidden ~= true)
     ticker = C_Timer.NewTicker(0.5, function()
         ticks = ticks + 1
-        if ticks % REFRESH_TICKS == 0 then sentCount = {} end
+        if ticks % REFRESH_TICKS == 0 then lastSent = {} end
+        if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
         local test = ns.KeyTestPayload and ns.KeyTestPayload()
-        if test then ns.StripWrite(test) return end
-        local ok, p = pcall(payload)
-        if not ok then p = "TC1|error|" .. tostring(p) end
-        -- Alternate with the state only while names are waiting to be sent.
-        showNames = not showNames
-        if showNames then
-            local okNames, names = pcall(namesPayload)
-            if okNames and names then ns.StripWrite(names) return end
-        end
-        ns.StripWrite(p)
+        if test then ns.StripWrite(test) lastSent = {} return end
+        if ns.StripBusy() then return end
+        local p = nextMessage()
+        if p then ns.StripWrite(p) end
     end)
 end)
+
+local function setting(key, value, low, high, what)
+    value = tonumber(value)
+    if not value or value < low or value > high then
+        print("|cff66ccffThor Companion|r " .. what .. " must be " .. low .. " to " .. high)
+        return
+    end
+    ThorCompanionDB[key] = value
+    ns.StripRefresh()
+end
 
 SLASH_THORCOMPANION1 = "/thor"
 SlashCmdList.THORCOMPANION = function(msg)
     msg = (msg or ""):lower()
-    local offset = tonumber(msg:match("^offset%s+(%d+)$"))
-    if offset then
-        ThorCompanionDB.offset = offset
-        ns.StripMove(offset)
-        print("|cff66ccffThor Companion|r strip moved to " .. offset .. " pixels above the bottom edge")
+    local right, top = msg:match("^pos%s+(%d+)%s+(%d+)$")
+    local cell = msg:match("^cell%s+(%d+)$")
+    local shadeStep = msg:match("^shade%s+(%d+)$")
+    if right then
+        setting("right", right, 0, 2000, "the distance from the right edge")
+        setting("top", top, 0, 1200, "the distance from the top edge")
+    elseif msg == "shape line" or msg == "shape square" then
+        ThorCompanionDB.shape = msg:sub(7)
+        ThorCompanionDB.top = nil  -- each shape has its own default place
+        ns.StripRefresh()
+    elseif cell then
+        setting("cell", cell, 2, 8, "the cell size")
+    elseif shadeStep then
+        setting("shade", shadeStep, 4, 80, "the shade step")
     elseif msg == "info" then
         print("|cff66ccffThor Companion|r " .. ns.StripInfo())
     elseif msg == "taps" then
@@ -142,9 +190,11 @@ SlashCmdList.THORCOMPANION = function(msg)
         ThorCompanionDB.hidden = (msg == "hide")
         ns.StripShow(msg == "show")
     else
-        local ok, p = pcall(payload)
-        print("|cff66ccffThor Companion|r strip capacity " .. ns.StripCapacity() .. " bytes")
-        print(ok and p or ("error: " .. tostring(p)))
+        print("|cff66ccffThor Companion|r " .. ns.StripInfo())
+        for _, kind in ipairs({ status, bags }) do
+            local ok, p = pcall(kind)
+            print(ok and p or ("error: " .. tostring(p)))
+        end
         local okNames, names = pcall(namesPayload, true)
         print(okNames and (names or "all item names sent") or ("error: " .. tostring(names)))
     end

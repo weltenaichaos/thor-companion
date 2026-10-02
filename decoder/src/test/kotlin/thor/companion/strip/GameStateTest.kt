@@ -30,6 +30,12 @@ class GameStateTest {
     }
 
     @Test
+    fun parsesTapKeys() {
+        val s = GameState.parse("TC1|X|5|0|1|0|0|1/16|6948:1:1,4604:7:12,159:5")!!
+        assertEquals(listOf(BagItem(6948, 1, 1), BagItem(4604, 7, 12), BagItem(159, 5)), s.items)
+    }
+
+    @Test
     fun rejectsOtherPayloads() {
         assertNull(GameState.parse("TC1|error|Data.lua:12: boom"))
         assertNull(GameState.parse("hello"))

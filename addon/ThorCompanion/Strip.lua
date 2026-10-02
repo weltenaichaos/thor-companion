@@ -179,8 +179,12 @@ end
 -- going round; the caller waits with the next one, so the app sees every part.
 -- (Only waiting for the first round was too short: the app often first notices
 -- a message halfway through it, and the facing in the status changes all the time.)
+-- The status (your position) may go sooner: a newer one replaces it anyway.
+local STATUS_SECONDS = 0.7
+
 function ns.StripBusy()
-    return GetTime() - shownAt < MIN_SECONDS or (#parts > 1 and rounds > 0)
+    local hold = message and message:sub(1, 4) == "TS1|" and STATUS_SECONDS or MIN_SECONDS
+    return GetTime() - shownAt < hold or (#parts > 1 and rounds > 0)
 end
 
 function ns.StripWrite(payload)

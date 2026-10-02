@@ -172,19 +172,25 @@ local function drawArt(mapID)
         t:ClearAllPoints()
         t:SetPoint("TOPLEFT", art, "TOPLEFT", ((i - 1) % cols) * layer.tileWidth * k, -math.floor((i - 1) / cols) * layer.tileHeight * k)
     end
+    -- The explored areas on top; this game's entries lack the tile counts, so
+    -- they are worked out from the size like the world map does. A problem here
+    -- still leaves the base art.
+    pcall(function()
     for _, e in ipairs(C_MapExplorationInfo.GetExploredMapTextures(mapID) or {}) do
+        local tall = e.numTexturesTall or math.ceil(e.textureHeight / 256)
+        local wide = e.numTexturesWide or math.ceil(e.textureWidth / 256)
         if not e.isShownByMouseOver then
-            for row = 1, e.numTexturesTall do
+            for row = 1, tall do
                 local h, fileH = 256, 256
-                if row == e.numTexturesTall then
+                if row == tall then
                     h = e.textureHeight % 256
                     if h == 0 then h = 256 end
                     fileH = 16
                     while fileH < h do fileH = fileH * 2 end
                 end
-                for col = 1, e.numTexturesWide do
+                for col = 1, wide do
                     local w, fileW = 256, 256
-                    if col == e.numTexturesWide then
+                    if col == wide then
                         w = e.textureWidth % 256
                         if w == 0 then w = 256 end
                         fileW = 16
@@ -192,7 +198,7 @@ local function drawArt(mapID)
                     end
                     n = n + 1
                     local t = texture(n)
-                    t:SetTexture(e.fileDataIDs[(row - 1) * e.numTexturesWide + col], nil, nil, "TRILINEAR")
+                    t:SetTexture(e.fileDataIDs[(row - 1) * wide + col], nil, nil, "TRILINEAR")
                     t:SetTexCoord(0, w / fileW, 0, h / fileH)
                     t:SetSize(w * k, h * k)
                     t:ClearAllPoints()
@@ -201,6 +207,7 @@ local function drawArt(mapID)
             end
         end
     end
+    end)
     art:Show()
     return n > 0
 end

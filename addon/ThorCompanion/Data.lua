@@ -73,7 +73,7 @@ end
 local SENDS = 2
 local REFRESH_TICKS = 600       -- five minutes: state and bags again, for an app started late
 local NAMES_REFRESH_TICKS = 3600 -- half an hour: names again (the app keeps the ones it has)
-local MOVE_SECONDS = 4           -- while walking, the position is sent at most this often
+local MOVE_SECONDS = 1.5         -- while walking, the position is sent at most this often
 local sentCount = {}
 
 -- The next page of names that still need sending, or nil when there are none.
@@ -168,6 +168,10 @@ SlashCmdList.THORCOMPANION = function(msg)
     if right then
         setting("right", right, 0, 2000, "the distance from the right edge")
         setting("top", top, 0, 1200, "the distance from the top edge")
+    elseif msg == "shape line" or msg == "shape square" then
+        ThorCompanionDB.shape = msg:sub(7)
+        ThorCompanionDB.top = nil  -- each shape has its own default place
+        ns.StripRefresh()
     elseif cell then
         setting("cell", cell, 2, 8, "the cell size")
     elseif shadeStep then

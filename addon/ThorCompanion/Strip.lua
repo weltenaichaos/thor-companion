@@ -1,12 +1,13 @@
 -- Strip.lua
 -- Draws the data for the companion app as a small square of dark grey cells in
--- the top-right corner. The app reads the game's picture directly (no camera),
+-- the top-right corner (or, with /thor shape line, a thin line along the top
+-- edge). The app reads the game's picture directly (no camera),
 -- so the cells only need to differ a little: four shades close to black, two
 -- bits per cell.
 --
--- The square is COLS x COLS cells, rows numbered from the top:
---   row 0         sync: lightest and darkest shade alternating, starting light
---   then, cell by cell (left to right, row by row from row 1):
+-- COLS x COLS cells, numbered left to right (and row by row, for the square):
+--   cells 0..COLS-1  sync: lightest and darkest shade alternating, starting light
+--   then, cell by cell:
 --     8 cells     calibration: shades 0,1,2,3,0,1,2,3
 --     4 bytes     header: format version, message number, part (index << 4 | count - 1), length
 --     length      payload bytes
@@ -31,11 +32,17 @@ local frame, cells
 local msgSeq = 0
 local message, parts, part, rounds = nil, {}, 1, 0
 local stepper
-local shownAt = 0
+local shownAt = -100
+
+-- The same cells either as a COLS x COLS square or unrolled into one line
+-- (COLS * COLS cells long, one cell high) along the top edge.
+local function lineShape()
+    return ThorCompanionDB and ThorCompanionDB.shape == "line"
+end
 
 local function settings()
     local db = ThorCompanionDB or {}
-    return db.cell or 3, db.shade or 24, db.right or 0, db.top or 22
+    return db.cell or 3, db.shade or 24, db.right or 0, db.top or (lineShape() and 0 or 22)
 end
 
 local function shade(level)
@@ -69,14 +76,15 @@ local function place()
     local _, h = GetPhysicalScreenSize()
     -- Ignoring the UI scale, with this scale 1 unit = 1 physical pixel.
     frame:SetScale(768 / h)
-    frame:SetSize(COLS * cell, COLS * cell)
+    local perRow = lineShape() and COLS * COLS or COLS
+    frame:SetSize(perRow * cell, COLS * COLS / perRow * cell)
     frame:ClearAllPoints()
     frame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -right, -top)
     for i = 0, COLS * COLS - 1 do
         local t = cells[i]
         t:SetSize(cell, cell)
         t:ClearAllPoints()
-        t:SetPoint("TOPLEFT", frame, "TOPLEFT", (i % COLS) * cell, -math.floor(i / COLS) * cell)
+        t:SetPoint("TOPLEFT", frame, "TOPLEFT", (i % perRow) * cell, -math.floor(i / perRow) * cell)
     end
 end
 

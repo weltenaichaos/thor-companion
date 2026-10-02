@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decode the Thor Companion data square from top-screen screenshots.
+"""Decode the Thor Companion data line (or square) from top-screen screenshots.
 
 Usage: decode_strip.py screenshot.png [more.png ...]
 
@@ -83,12 +83,20 @@ def decode(img):
     found = find_square(img)
     if not found:
         return None
-    x0, y0, cell = found
+    # The line's cells go on along the sync row; the square's wrap after COLS.
+    line = decode_at(img, *found, COLS * COLS)
+    if line["crc_ok"]:
+        return dict(line, shape="line")
+    return dict(decode_at(img, *found, COLS), shape="square")
+
+
+def decode_at(img, x0, y0, cell, per_row):
     px = img.load()
+    w, h = img.size
 
     def colour(i):
-        row, col = divmod(COLS + i, COLS)
-        return px[int(x0 + (col + 0.5) * cell), int(round(y0 + row * cell))]
+        row, col = divmod(COLS + i, per_row)
+        return px[min(w - 1, int(x0 + (col + 0.5) * cell)), min(h - 1, int(round(y0 + row * cell)))]
 
     calib = [colour(c) for c in range(CALIB)]
     shades = [tuple((calib[s][k] + calib[s + 4][k]) / 2 for k in range(3)) for s in range(4)]

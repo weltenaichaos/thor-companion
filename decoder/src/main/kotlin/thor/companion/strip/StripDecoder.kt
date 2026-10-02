@@ -53,17 +53,25 @@ object StripDecoder {
     }
 
     /**
-     * Decodes the square. [near] is the row where it was last found (StripFrame.row):
-     * only the rows around it are searched first, which is much quicker.
+     * Decodes the square, or the same cells unrolled into one line. [near] is the row
+     * where it was last found (StripFrame.row): only the rows around it are searched
+     * first, which is much quicker.
      */
     fun decode(px: Pixels, near: Int = -1): Result {
         val found = (if (near >= 0) findSquare(px, near - 16, near + 16) else null)
             ?: findSquare(px, 0, SCAN_ROWS)
         val (x0, y0, cell) = found ?: return Result.Failed("data square not found")
+        // The line's cells go on along the sync row; the square's wrap after COLS.
+        val line = decodeAt(px, x0, y0, cell, COLS * COLS)
+        if (line is Result.Ok && line.frame.crcOk) return line
+        val square = decodeAt(px, x0, y0, cell, COLS)
+        return if (square is Result.Ok && !square.frame.crcOk && line is Result.Ok) line else square
+    }
 
+    private fun decodeAt(px: Pixels, x0: Double, y0: Int, cell: Double, perRow: Int): Result {
         fun colour(i: Int): Int {
-            val row = (COLS + i) / COLS
-            val col = (COLS + i) % COLS
+            val row = (COLS + i) / perRow
+            val col = (COLS + i) % perRow
             val x = (x0 + (col + 0.5) * cell).toInt().coerceIn(0, px.width - 1)
             val y = (y0 + row * cell).roundToInt().coerceIn(0, px.height - 1)
             return px.rgb(x, y)

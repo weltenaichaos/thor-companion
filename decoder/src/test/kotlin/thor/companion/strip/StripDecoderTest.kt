@@ -14,6 +14,16 @@ class StripDecoderTest {
         override fun rgb(x: Int, y: Int) = data[y * width + x]
     }
 
+    /** The same, drawn as one line along the top edge (/thor shape line). */
+    @Test
+    fun decodesLineDrawnByTheAddon() {
+        val img = javax.imageio.ImageIO.read(javaClass.getResourceAsStream("/addon-line-v4.png"))
+        val px = ArrayPixels(img.width, img.height, img.getRGB(0, 0, img.width, img.height, null, 0, img.width))
+        val frame = decodeOk(px)
+        assertTrue(frame.crcOk)
+        assertEquals("TS1|Xandra|5|40912|1420|0.3187|0.6556", String(frame.payload))
+    }
+
     /** Drawn by the real Strip.lua (in a mock game), upscaled and colour-shifted like on the Thor. */
     @Test
     fun decodesSquareDrawnByTheAddon() {
@@ -65,6 +75,15 @@ class StripDecoderTest {
     }
 
     @Test
+    fun decodesTheLineAlongTheTopEdge() {
+        val payload = "TB1|3/98|" + (1..7).joinToString(",") { "${it * 1000}:$it:$it" }
+        val frame = decodeOk(render(listOf(payload.toByteArray()), seq = 9, line = true)[0])
+        assertTrue(frame.crcOk)
+        assertEquals(payload, String(frame.payload))
+        assertTrue(frame.row < 5, "the line sits at the very top")
+    }
+
+    @Test
     fun reportsBadCrc() {
         val px = render(listOf("TS1|x|1|0|0|0|0".toByteArray()), seq = 1, flipCell = 40)[0]
         assertFalse(decodeOk(px).crcOk)
@@ -84,9 +103,11 @@ class StripDecoderTest {
      * 1920x1080 and colours pushed through a shifting matrix. Returns the top rows.
      */
     private fun render(
-        parts: List<ByteArray>, seq: Int, cell: Int = 3, shade: Int = 24, flipCell: Int = -1,
+        parts: List<ByteArray>, seq: Int, cell: Int = 3, shade: Int = 24, flipCell: Int = -1, line: Boolean = false,
     ): List<Pixels> {
-        val gw = 1280; val gh = 720; val cols = StripDecoder.COLS; val right = 0; val top = 22
+        val gw = 1280; val gh = 720; val cols = StripDecoder.COLS; val right = 0
+        val perRow = if (line) cols * cols else cols
+        val top = if (line) 0 else 22
         val rnd = Random(seq)
         val background = IntArray(gw * gh) {
             val v = rnd.nextInt(10, 70)
@@ -104,12 +125,12 @@ class StripDecoderTest {
             if (flipCell >= 0) levels[cols + flipCell] = levels[cols + flipCell] xor 1
 
             val game = background.copyOf()
-            val left = gw - right - cols * cell
+            val left = gw - right - perRow * cell
             for (c in levels.indices) {
                 val v = levels[c] * shade
                 val colour = (v shl 16) or (v shl 8) or v
-                val x0 = left + (c % cols) * cell
-                val y0 = top + (c / cols) * cell
+                val x0 = left + (c % perRow) * cell
+                val y0 = top + (c / perRow) * cell
                 for (dy in 0 until cell) for (dx in 0 until cell) game[(y0 + dy) * gw + x0 + dx] = colour
             }
             val sw = 1920; val sh = 400

@@ -38,6 +38,8 @@ when the game starts. In game:
   20 cells wide).
 - `/thor shade N` sets how far apart the four shades are, 4 to 80 (default 24; the
   lightest is 3 × N out of 255). Lower is darker and harder for the app to read.
+- `/thor shape line` draws the same cells as one thin line along the top edge instead;
+  `/thor shape square` goes back.
 - `/thor hide` and `/thor show` turn the square off and on.
 - `/thor taps off` and `/thor taps on` turn tap-to-use off and on (default on). With it on,
   every bag slot has its own key (CTRL-F1 and up), bound out of combat, and tapping an

@@ -30,7 +30,6 @@ local slotKey = {}     -- "bag:slot" -> index into ns.ActionKeys
 local pending = false
 
 local P = "|cff66ccffThor Companion|r "
-local lastTap = 0
 
 -- Points a slot's button at its item, or at nothing when the slot is empty: the
 -- game's item button raises a Lua error when told to use an empty slot.
@@ -49,16 +48,6 @@ local function button(i)
         -- button was made, and then ignores the edge that arrives (seen on the Thor).
         b:SetAttribute("useOnKeyDown", false)
         b:RegisterForClicks("AnyUp", "AnyDown")
-        -- Diagnostics while tap-to-use is being tried out on the Thor: say what arrived.
-        b:HookScript("OnClick", function(self, mouse, down)
-            if down then return end -- the item is used on release; report that one
-            lastTap = GetTime()
-            local item = self:GetAttribute("item")
-            local bag, slot = (item or ""):match("^(%d+) (%d+)$")
-            local link = bag and C_Container.GetContainerItemLink(tonumber(bag), tonumber(slot))
-            print(P .. "tap: " .. tostring(ns.ActionKeys[i]) .. " arrived for bag slot " .. tostring(item) ..
-                " " .. tostring(link) .. " (" .. tostring(mouse) .. ", down=" .. tostring(down) .. ")")
-        end)
         buttons[i] = b
     end
     return b
@@ -115,17 +104,10 @@ owner:RegisterEvent("BAG_UPDATE_DELAYED")
 owner:RegisterEvent("PLAYER_REGEN_ENABLED")
 owner:RegisterEvent("ADDON_ACTION_BLOCKED")
 owner:RegisterEvent("ADDON_ACTION_FORBIDDEN")
-owner:RegisterEvent("UI_ERROR_MESSAGE")
 owner:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
         local addon, fn = ...
         if addon == "ThorCompanion" then print(P .. "the game blocked " .. tostring(fn) .. " (" .. event .. ")") end
-        return
-    end
-    if event == "UI_ERROR_MESSAGE" then
-        -- Diagnostics: the game's red error text right after a tap (out of range, level too low, ...).
-        local _, text = ...
-        if GetTime() - lastTap < 2 then print(P .. "the game said: " .. tostring(text)) end
         return
     end
     if event == "PLAYER_REGEN_ENABLED" then

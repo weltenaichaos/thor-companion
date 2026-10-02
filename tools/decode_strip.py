@@ -50,7 +50,11 @@ def sync_at(px, w, y):
             want = magenta if want is green else green
             if len(starts) == 4:
                 cell = (starts[3] - starts[0]) / 3
-                return (starts[0], cell) if cell >= 2 else None
+                # Real sync cells are evenly spaced; data cells that happen to be
+                # magenta and green rarely are.
+                slack = max(1.5, cell / 4)
+                even = all(abs(starts[i] - starts[i - 1] - cell) <= slack for i in (1, 2, 3))
+                return (starts[0], cell) if cell >= 2 and even else None
     return None
 
 
@@ -58,12 +62,15 @@ def find_strip(img):
     """(x of first cell, middle y of the bottom cell row, cell size) or None."""
     w, h = img.size
     px = img.load()
-    first = None
+    first = first_sync = None
     for y in range(h - 1, max(h - 300, -1), -1):
         found = sync_at(px, w, y)
         if found and first is None:
-            first = y
-        elif not found and first is not None:
+            first, first_sync = y, found
+        elif first is not None and (not found or abs(found[0] - first_sync[0]) > 1
+                                    or abs(found[1] - first_sync[1]) > 1):
+            # The row above the sync cells ends the block, even when its own
+            # cells look like a sync at another place or size.
             mid = (first + y + 1) // 2  # edge rows are blended; use the middle
             x0, cell = sync_at(px, w, mid)
             return x0, mid, cell

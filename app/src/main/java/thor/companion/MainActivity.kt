@@ -14,6 +14,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import thor.companion.strip.GameState
+import thor.companion.strip.ItemNames
 import thor.companion.strip.StripDecoder
 import java.util.Locale
 
@@ -26,6 +27,7 @@ class MainActivity : Activity() {
     private enum class Panel(val title: String) { BAGS("Bags"), CHARACTER("Character"), MAP("Map"), CHAT("Chat") }
 
     private lateinit var screen: TopScreen
+    private lateinit var names: NameStore
     private lateinit var status: TextView
     private lateinit var content: LinearLayout
     private val tabs = HashMap<Panel, Button>()
@@ -38,6 +40,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         screen = TopScreen(this)
+        names = NameStore(this)
         screen.displayId = getPreferences(MODE_PRIVATE).getString("display", null)
 
         val root = LinearLayout(this).apply {
@@ -97,8 +100,14 @@ class MainActivity : Activity() {
             val frame = (result as? StripDecoder.Result.Ok)?.frame?.takeIf { it.crcOk }
             if (frame != null) {
                 misses = 0
-                val parsed = GameState.parse(frame.payload)
-                runOnUiThread { onFrame(frame.seq, parsed) }
+                val page = ItemNames.parse(frame.payload)
+                if (page != null) {
+                    val changed = names.addAll(page)
+                    runOnUiThread { onNames(changed) }
+                } else {
+                    val parsed = GameState.parse(frame.payload)
+                    runOnUiThread { onFrame(frame.seq, parsed) }
+                }
             } else if (++misses == 4) {
                 val why = when {
                     px == null -> "the capture failed"
@@ -107,7 +116,9 @@ class MainActivity : Activity() {
                 }
                 runOnUiThread { status.text = "No data from the addon ($why). Is the game open with ThorCompanion on?" }
             }
-            SystemClock.sleep((500 - (SystemClock.uptimeMillis() - t0)).coerceIn(50, 500))
+            // The addon changes the strip every half second, alternating state and
+            // names, so read at least twice as often to see every frame.
+            SystemClock.sleep((200 - (SystemClock.uptimeMillis() - t0)).coerceIn(30, 200))
         }
     }
 
@@ -117,6 +128,11 @@ class MainActivity : Activity() {
         lastSeq = seq
         state = parsed
         render()
+    }
+
+    private fun onNames(changed: Boolean) {
+        status.text = "Connected"
+        if (changed && panel == Panel.BAGS) render()
     }
 
     /** Long-press on the status line: try the next screen, in case the default one is the wrong one. */
@@ -173,24 +189,44 @@ class MainActivity : Activity() {
         row.addView(line("${s.freeSlots ?: "?"} of ${s.totalSlots ?: "?"} slots free", TEXT, 16f))
         content.addView(row)
 
-        val grid = GridLayout(this).apply { columnCount = 6; useDefaultMargins = false }
+        val grid = GridLayout(this).apply { columnCount = 5; useDefaultMargins = false }
         for (item in s.items) {
+            val known = names[item.itemId]
             val tile = TextView(this).apply {
-                text = "#${item.itemId}\n×${item.count}"
+                val count = if (item.count > 1) "\n×${item.count}" else ""
+                text = (known?.name ?: "#${item.itemId}") + count
                 gravity = Gravity.CENTER
-                setTextColor(TEXT)
+                maxLines = 3
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(dp(4), dp(2), dp(4), dp(2))
+                setTextColor(if (known != null) qualityColour(known.quality) else DIM)
                 textSize = 12f
                 background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(CARD) }
             }
             grid.addView(tile, GridLayout.LayoutParams().apply {
                 width = 0
-                height = dp(64)
+                height = dp(72)
                 columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                // GridLayout lines tiles up by text baseline by default, which pushed
+                // one-line tiles (no stack count) above their neighbours.
+                rowSpec = GridLayout.spec(GridLayout.UNDEFINED, GridLayout.FILL)
                 setMargins(dp(3), dp(3), dp(3), dp(3))
             })
         }
         content.addView(grid)
         if (s.items.isEmpty()) content.addView(line("Your bags are empty.", DIM))
+    }
+
+    /** WoW's item quality colours. */
+    private fun qualityColour(q: Int): Int = when (q) {
+        0 -> Color.rgb(157, 157, 157)
+        2 -> Color.rgb(30, 255, 0)
+        3 -> Color.rgb(0, 112, 221)
+        4 -> Color.rgb(163, 53, 238)
+        5 -> Color.rgb(255, 128, 0)
+        6 -> Color.rgb(230, 204, 128)
+        7, 8 -> Color.rgb(0, 204, 255)
+        else -> TEXT
     }
 
     private fun money(s: GameState): String =

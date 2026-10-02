@@ -130,6 +130,7 @@ end
 -- The clean copy: the map's art tiles and the explored areas on top, drawn like
 -- the world map does it (Blizzard's MapCanvasDetailLayer and MapExplorationPin).
 local art, artTextures = nil, {}
+local exploredNote = ""
 
 local function texture(i)
     local t = artTextures[i]
@@ -167,6 +168,7 @@ local function drawArt(mapID)
     for i, file in ipairs(C_Map.GetMapArtLayerTextures(mapID, 1) or {}) do
         n = n + 1
         local t = texture(n)
+        t:SetDrawLayer("ARTWORK", 0)
         t:SetTexture(file, nil, nil, "TRILINEAR")
         t:SetSize(layer.tileWidth * k, layer.tileHeight * k)
         t:ClearAllPoints()
@@ -175,8 +177,10 @@ local function drawArt(mapID)
     -- The explored areas on top; this game's entries lack the tile counts, so
     -- they are worked out from the size like the world map does. A problem here
     -- still leaves the base art.
-    pcall(function()
+    local explored = 0
+    local okExplored, err = pcall(function()
     for _, e in ipairs(C_MapExplorationInfo.GetExploredMapTextures(mapID) or {}) do
+        explored = explored + 1
         local tall = e.numTexturesTall or math.ceil(e.textureHeight / 256)
         local wide = e.numTexturesWide or math.ceil(e.textureWidth / 256)
         if not e.isShownByMouseOver then
@@ -198,6 +202,8 @@ local function drawArt(mapID)
                     end
                     n = n + 1
                     local t = texture(n)
+                    -- Above the base art (same layer and level would draw in any order).
+                    t:SetDrawLayer("ARTWORK", 1)
                     t:SetTexture(e.fileDataIDs[(row - 1) * wide + col], nil, nil, "TRILINEAR")
                     t:SetTexCoord(0, w / fileW, 0, h / fileH)
                     t:SetSize(w * k, h * k)
@@ -208,6 +214,7 @@ local function drawArt(mapID)
         end
     end
     end)
+    exploredNote = okExplored and (explored .. " explored areas") or ("explored areas failed: " .. tostring(err))
     art:Show()
     return n > 0
 end
@@ -225,7 +232,7 @@ function ns.MapPictureShow()
         return
     end
     pictureMap, pictureUntil = mapID, GetTime() + PICTURE_SECONDS
-    note = "showed map " .. mapID .. " at " .. date("%H:%M:%S")
+    note = "showed map " .. mapID .. " at " .. date("%H:%M:%S") .. ", " .. exploredNote
 end
 
 -- TW1 while the art is up, else nil (and the art goes away).

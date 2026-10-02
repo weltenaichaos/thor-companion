@@ -8,7 +8,7 @@
 --   TH1|...                                                   (new chat lines, see Chat.lua)
 --   TM1|...                                                   (places on the zone map, see Map.lua)
 -- The app keeps the names it has seen. State and bags are sent again every five
--- minutes and names every half hour, for an app that started after the game.
+-- minutes (names too), for an app that started after the game.
 
 local _, ns = ...
 
@@ -74,10 +74,10 @@ local function itemName(id)
 end
 
 -- Each name is sent twice (so the app surely sees it), then left out until the
--- half-hourly refresh, so the square stays still unless something changes.
+-- next refresh, so the square stays still unless something changes.
 local SENDS = 2
 local REFRESH_TICKS = 600       -- five minutes: state and bags again, for an app started late
-local NAMES_REFRESH_TICKS = 3600 -- half an hour: names again (the app keeps the ones it has)
+local NAMES_REFRESH_TICKS = 600  -- five minutes: names again, for an app that was reinstalled
 local MOVE_SECONDS = 1.5         -- while walking, the position is sent at most this often
 local sentCount = {}
 

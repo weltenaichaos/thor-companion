@@ -203,6 +203,7 @@ local function drawArt(mapID)
 end
 
 local note = "the world map has not been open yet"
+local lastOffer = "none yet"
 
 function ns.MapPicturePayload()
     local wm = WorldMapFrame
@@ -225,13 +226,14 @@ function ns.MapPicturePayload()
     if offerMap ~= mapID or now > offerUntil then
         if art then art:Hide() end
         local explored = #(C_MapExplorationInfo.GetExploredMapTextures(mapID) or {})
-        if offered[mapID] == explored then note = "picture of map " .. mapID .. " already taken" return nil end
+        if offered[mapID] == explored then note = "picture of map " .. mapID .. " already offered (/thor map again to offer it again)" return nil end
         if now - stillSince < 1 then return nil end
         offered[mapID] = explored
         offerMap, offerUntil = mapID, now + PICTURE_SECONDS
         local drawn, okArt = pcall(drawArt, mapID)
         if not drawn or not okArt then
             note = "could not draw map " .. mapID .. ": " .. tostring(okArt)
+            lastOffer = note
             if art then art:Hide() end
             offerUntil = 0
             return nil
@@ -242,11 +244,17 @@ function ns.MapPicturePayload()
     if not sl or not cl then note = "map not placed yet" return nil end
     local r = function(v) return math.floor(v + 0.5) end
     note = "showing map " .. mapID .. " for the app"
+    lastOffer = string.format("map %d at %s, %dx%d game pixels", mapID, date("%H:%M:%S"), r(cw), r(ch))
     return string.format("TW1|%d|%d|%d|%d|%d|%d", mapID, r(cl - sl), r(st - ct), r(cw), r(ch), (ThorCompanionDB and ThorCompanionDB.cell) or 3)
 end
 
 -- For /thor map: what the map picture is doing, and the places message.
 function ns.MapInfo()
     local ok, p = pcall(ns.MapPayload)
-    return "zone picture: " .. note .. "\n" .. (ok and (p or "no map here") or ("error: " .. tostring(p)))
+    return "zone picture: " .. note .. "\nlast offered: " .. lastOffer .. "\n" .. (ok and (p or "no map here") or ("error: " .. tostring(p)))
+end
+
+-- For /thor map again: offer every map's picture again.
+function ns.MapAgain()
+    offered = {}
 end

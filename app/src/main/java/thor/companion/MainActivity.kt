@@ -203,22 +203,33 @@ class MainActivity : Activity() {
      * addon saying so, so a map closed in between is not taken. Runs on the reader thread.
      */
     private fun takeMapPicture(pic: MapPicture, message: String) {
-        val px = screen.capture(rows = 4000) ?: return
-        val frame = (StripDecoder.decode(px) as? StripDecoder.Result.Ok)?.frame ?: return
-        if (!frame.crcOk || String(frame.payload) != message) return
+        fun fail(why: String) = runOnUiThread {
+            pictureNote = "Map picture not taken: $why"
+            if (panel == Panel.MAP) updateMap()
+        }
+        val px = screen.capture(rows = 4000) ?: return fail("the screenshot failed")
+        val found = StripDecoder.decode(px)
+        val frame = (found as? StripDecoder.Result.Ok)?.frame?.takeIf { it.crcOk }
+            ?: return fail("the data square was not readable in the screenshot (${(found as? StripDecoder.Result.Failed)?.reason ?: "damaged"})")
+        if (String(frame.payload) != message) return fail("the map was closed or changed before the screenshot")
         val r = pic.onScreen(frame)
         val l = r[0].coerceIn(0, px.width); val t = r[1].coerceIn(0, px.height)
         val w = r[2].coerceIn(0, px.width) - l; val h = r[3].coerceIn(0, px.height) - t
-        if (w < 50 || h < 50) return
+        if (w < 50 || h < 50) return fail("the map is outside the screen (${r.joinToString(",")} on ${px.width}x${px.height})")
         val pixels = IntArray(w * h) { i -> px.rgb(l + i % w, t + i / w) or (0xFF shl 24) }
         val bitmap = android.graphics.Bitmap.createBitmap(pixels, w, h, android.graphics.Bitmap.Config.ARGB_8888)
-        runCatching { mapFile(pic.mapId).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
+        val saved = runCatching { mapFile(pic.mapId).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
+        if (saved.isFailure) return fail("could not save it (${saved.exceptionOrNull()?.message})")
         runOnUiThread {
             pictures.remove(pic.mapId)
-            status.text = "Took a picture of the map for the Map tab"
+            pictureNote = "Took a picture of map ${pic.mapId} (${w}x$h)"
             if (panel == Panel.MAP) updateMap()
         }
     }
+
+    /** What happened to the last map picture, shown under the map (the status line changes too often). */
+    private var pictureNote = ""
+    private var pictureLine: TextView? = null
 
     /** Zone pictures loaded so far (null: there is none yet). */
     private val pictures = HashMap<Int, android.graphics.Bitmap?>()
@@ -327,6 +338,9 @@ class MainActivity : Activity() {
         content.addView(view, LinearLayout.LayoutParams(-1, maxOf(dp(240), scroll.height - dp(90))))
         content.addView(line("Tap a marker for its name. ! pick up a quest, yellow circle: do a quest there, ? turn in, F flight master, D dungeon, ★ rare, ● group. " +
             "The yellow line is where you walked. Open the world map in the game (zoomed out, standing still) once per zone to get its picture here.", DIM, 12f))
+        val note = line("", DIM, 12f)
+        content.addView(note)
+        pictureLine = note
         mapView = view
         mapTitle = title
         updateMap()
@@ -343,7 +357,9 @@ class MainActivity : Activity() {
         view.trail = s?.mapId?.let { trail.paths[it] }.orEmpty()
         view.picture = s?.mapId?.let { picture(it) }
         val where = if (s?.x != null && s.y != null && s.x!! > 0) String.format(Locale.US, "  %.1f, %.1f", s.x!! * 100, s.y!! * 100) else ""
-        mapTitle?.text = (map?.zone?.ifEmpty { null } ?: "Map ${s?.mapId ?: "unknown"}") + where
+        mapTitle?.text = (map?.zone?.ifEmpty { null } ?: "Map ${s?.mapId ?: "unknown"}") + where +
+            (if (s?.mapId != null && view.picture == null) "  (no picture of map ${s.mapId} yet)" else "")
+        pictureLine?.text = pictureNote
         view.invalidate()
     }
 

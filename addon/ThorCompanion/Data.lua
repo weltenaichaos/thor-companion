@@ -207,6 +207,9 @@ SlashCmdList.THORCOMPANION = function(msg)
     elseif msg == "chat channels on" or msg == "chat channels off" then
         ns.ChatChannels(msg == "chat channels on")
         print("|cff66ccffThor Companion|r public channels in the app's chat " .. (msg:sub(-2) == "on" and "on" or "off"))
+    elseif msg == "map again" then
+        ns.MapAgain()
+        print("|cff66ccffThor Companion|r the next zoomed-out world map goes to the app again")
     elseif msg == "map" then
         print("|cff66ccffThor Companion|r " .. ns.MapInfo())
     elseif msg == "info" then

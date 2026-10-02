@@ -118,6 +118,10 @@ owner:RegisterEvent("ADDON_ACTION_FORBIDDEN")
 owner:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
         local addon, fn = ...
+        -- Opening the chat box for a whisper runs the game's own controller code,
+        -- which then may not pick a new interact target. The whisper works, so
+        -- that one is not worth a notice (seen on the Thor).
+        if GetTime() - ns.WhisperOpenedAt() < 1 then return end
         if addon == "ThorCompanion" then print(P .. "the game blocked " .. tostring(fn) .. " (" .. event .. ")") end
         return
     end

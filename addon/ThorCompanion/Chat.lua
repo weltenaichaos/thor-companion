@@ -77,7 +77,11 @@ local function remember(name)
     whisperUsed[slot] = whisperClock
 end
 
+local openedAt = -100
+function ns.WhisperOpenedAt() return openedAt end
+
 local function openWhisper(name)
+    openedAt = GetTime()
     local tell = (ChatFrameUtil and ChatFrameUtil.SendTell) or ChatFrame_SendTell
     if tell then return tell(name) end
     local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat

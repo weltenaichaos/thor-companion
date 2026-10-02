@@ -153,6 +153,10 @@ local function drawArt(mapID)
         bg:SetAllPoints()
         bg:SetColorTexture(0, 0, 0, 1)
     end
+    if art:GetParent() ~= ns.HostFrame() then
+        art:SetParent(ns.HostFrame())
+        art:SetFrameStrata("FULLSCREEN_DIALOG")
+    end
     for _, t in ipairs(artTextures) do t:Hide() end
     local layer = (C_Map.GetMapArtLayers(mapID) or {})[1]
     if not layer then return false end

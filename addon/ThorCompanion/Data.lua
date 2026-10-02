@@ -165,6 +165,7 @@ f:SetScript("OnEvent", function()
         ticks = ticks + 1
         if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain = {}, true end
         if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
+        ns.StripFollowMap()
         local test = ns.KeyTestPayload and ns.KeyTestPayload()
         if test then ns.StripWrite(test) lastSent = {} return end
         -- The world map is open: say where, so the app can take a picture of the zone.
@@ -212,6 +213,8 @@ SlashCmdList.THORCOMPANION = function(msg)
         print("|cff66ccffThor Companion|r the next zoomed-out world map goes to the app again")
     elseif msg == "map" then
         print("|cff66ccffThor Companion|r " .. ns.MapInfo())
+        print("interface shown=" .. tostring(UIParent:IsShown()) .. ", square on " ..
+            (ns.HostFrame() == UIParent and "interface" or "world map") .. ", " .. ns.StripInfo())
     elseif msg == "info" then
         print("|cff66ccffThor Companion|r " .. ns.StripInfo())
     elseif msg == "taps" then

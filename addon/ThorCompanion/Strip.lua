@@ -145,16 +145,27 @@ function ns.StripInfo()
         tostring(l), tostring(b), tostring(fw), tostring(fh), cell, shadeStep, right, top)
 end
 
+-- The square's frame (for Map.lua, which measures the world map from it).
+function ns.StripFrame()
+    if not cells then build() end
+    return frame
+end
+
 -- Largest message in bytes (split over up to MAX_PARTS parts).
 function ns.StripCapacity()
     return PART_BYTES * MAX_PARTS
 end
 
--- True while a new message is still being shown for the first time, or has not
--- been up for MIN_SECONDS; the caller waits with the next one, so the app sees
--- every part.
+-- True while a message has not been up for MIN_SECONDS, or its parts are still
+-- going round; the caller waits with the next one, so the app sees every part.
+-- (Only waiting for the first round was too short: the app often first notices
+-- a message halfway through it, and the facing in the status changes all the time.)
+-- The status (your position) may go sooner: a newer one replaces it anyway.
+local STATUS_SECONDS = 0.7
+
 function ns.StripBusy()
-    return GetTime() - shownAt < MIN_SECONDS or (#parts > 1 and rounds >= ROUNDS)
+    local hold = message and message:sub(1, 4) == "TS1|" and STATUS_SECONDS or MIN_SECONDS
+    return GetTime() - shownAt < hold or (#parts > 1 and rounds > 0)
 end
 
 function ns.StripWrite(payload)

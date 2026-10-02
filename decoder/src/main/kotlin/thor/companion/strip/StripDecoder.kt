@@ -23,7 +23,10 @@ class StripFrame(
     /** Smallest distance between two calibration shades: how much margin decoding had. */
     val shadeMinDistance: Double,
     val cellPx: Double,
+    /** Middle of the sync row, in screen pixels. */
     val row: Int,
+    /** Left edge of the first cell, in screen pixels. */
+    val x: Double = 0.0,
 )
 
 /**
@@ -109,6 +112,7 @@ object StripDecoder {
                 shadeMinDistance = sqrt(spread.toDouble()),
                 cellPx = cell,
                 row = y0,
+                x = x0,
             )
         )
     }

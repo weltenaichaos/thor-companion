@@ -4,7 +4,7 @@ package thor.companion.strip
 data class BagItem(val itemId: Int, val count: Int, val key: Int? = null)
 
 /**
- * What the addon reports, put together from its `TS1|name|level|copper|mapID|x|y` and
+ * What the addon reports, put together from its `TS1|name|level|copper|mapID|x|y[|facing]` and
  * `TB1|free/total|itemID:count[:key],...` messages (see addon/ThorCompanion/Data.lua).
  * Values the game keeps secret arrive as "?" and come out as null.
  */
@@ -18,6 +18,8 @@ data class GameState(
     val freeSlots: Int?,
     val totalSlots: Int?,
     val items: List<BagItem>,
+    /** Which way the character faces, in radians: 0 is north, counter-clockwise. Null where the game hides it. */
+    val facing: Double? = null,
 ) {
     val gold: Long? get() = copper?.div(10000)
     val silver: Long? get() = copper?.div(100)?.rem(100)
@@ -49,6 +51,7 @@ data class GameState(
             mapId = f[i + 3].toIntOrNull()?.takeIf { it != 0 },
             x = f[i + 4].toDoubleOrNull(),
             y = f[i + 5].toDoubleOrNull(),
+            facing = if (f[0] == "TS1") f.getOrNull(i + 6)?.toDoubleOrNull() else null,
         )
 
         private fun bags(base: GameState, slotField: String, list: String): GameState {

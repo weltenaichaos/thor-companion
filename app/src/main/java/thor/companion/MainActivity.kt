@@ -15,9 +15,17 @@ import android.widget.ScrollView
 import android.widget.TextView
 import thor.companion.strip.ActionKeys
 import thor.companion.strip.GameState
+import thor.companion.strip.CharacterInfo
+import thor.companion.strip.ChatLine
+import thor.companion.strip.Gear
+import thor.companion.strip.GearItem
+import thor.companion.strip.ChatLog
 import thor.companion.strip.ItemNames
+import thor.companion.strip.MapPicture
 import thor.companion.strip.PartAssembler
 import thor.companion.strip.StripDecoder
+import thor.companion.strip.Trail
+import thor.companion.strip.ZoneMap
 import java.util.Locale
 
 /**
@@ -35,11 +43,22 @@ class MainActivity : Activity() {
     private val tabs = HashMap<Panel, Button>()
     private var panel = Panel.BAGS
     private var state: GameState? = null
+    private val chat = ChatLog()
+    private var zoneMap: ZoneMap? = null
+    private var character: CharacterInfo? = null
+    private var gear: List<GearItem> = emptyList()
+    private val trail = Trail()
+    private var trailUnsaved = 0
+    private var mapView: MapView? = null
+    private var mapTitle: TextView? = null
+    private lateinit var scroll: ScrollView
     private var gotKeys: Set<String> = emptySet()
     private var keyResult = ""
 
     @Volatile private var worker: Thread? = null
     @Volatile private var lastKeyAt = 0L
+    /** When the last status (with the position) came in: it is only sent when something changed. */
+    private var movedAt = 0L
     /** Start time and duration (ms) of each capture in the last minute, for the battery check. */
     private val captures = java.util.ArrayDeque<LongArray>()
     /** Key presses go out one at a time, in the order they were tapped. */
@@ -78,8 +97,11 @@ class MainActivity : Activity() {
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(header)
         root.addView(status)
-        root.addView(ScrollView(this).apply { addView(content) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        scroll = ScrollView(this).apply { addView(content) }
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
+        runCatching { trail.load(trailFile().readText()) }
+        loadLast()
         show(Panel.BAGS)
         status.text = "Looking for the game…"
     }
@@ -91,7 +113,51 @@ class MainActivity : Activity() {
 
     override fun onStop() {
         worker = null
+        saveTrail()
+        saveLast()
         super.onStop()
+    }
+
+    private fun trailFile() = java.io.File(filesDir, "trail.txt")
+
+    // The last message of each kind that describes the game's state, kept so a restarted
+    // app shows the bags, character and map right away instead of after the addon's
+    // next refresh (or a tap on Refresh).
+    /** False while the bags shown are the ones kept from before a restart: then a tap could use whatever moved into that slot since. */
+    private var bagsFresh = false
+    private val lastMessages = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private fun lastFile() = java.io.File(filesDir, "last-messages.txt")
+
+    private fun remember(message: String) {
+        val kind = message.take(4)
+        if (kind !in KEPT || lastMessages[kind] == message) return
+        lastMessages[kind] = message
+        if (kind != "TS1|") saveLast()
+    }
+
+    private fun saveLast() = runCatching {
+        // One message per record; messages contain newlines, so records are separated by a NUL.
+        lastFile().writeText(lastMessages.values.joinToString("\u0000"))
+    }
+
+    private fun loadLast() = runCatching {
+        if (!lastFile().exists()) return@runCatching
+        for (m in lastFile().readText().split('\u0000')) {
+            if (m.length < 4) continue
+            lastMessages[m.take(4)] = m
+            when {
+                m.startsWith("TM1|") -> zoneMap = ZoneMap.parse(m)
+                m.startsWith("TP1|") -> character = CharacterInfo.parse(m)
+                m.startsWith("TQ1|") -> gear = Gear.parse(m).orEmpty()
+                else -> GameState.parse(m, state)?.let { state = it }
+            }
+        }
+    }
+
+    private fun saveTrail() {
+        if (trailUnsaved == 0) return
+        trailUnsaved = 0
+        runCatching { trailFile().writeText(trail.save()) }
     }
 
     private fun loop() {
@@ -119,8 +185,15 @@ class MainActivity : Activity() {
                 near = frame.row
                 val message = assembler.add(frame)
                 val page = message?.let { ItemNames.parse(it) }
+                if (message?.startsWith("TS1|") == true) movedAt = SystemClock.uptimeMillis()
+                if (message != null) remember(message)
                 when {
                     message == null -> {}
+                    message.startsWith("TH1|") -> runOnUiThread { onChat(message) }
+                    message.startsWith("TM1|") -> ZoneMap.parse(message)?.let { runOnUiThread { onMap(it) } }
+                    message.startsWith("TP1|") -> CharacterInfo.parse(message)?.let { runOnUiThread { onCharacter(it, gear) } }
+                    message.startsWith("TQ1|") -> Gear.parse(message)?.let { runOnUiThread { onCharacter(character, it) } }
+                    message.startsWith("TW1|") -> MapPicture.parse(message)?.let { takeMapPicture(it, message) }
                     message.startsWith("TK1|") -> {
                         val keys = message.substring(4).split(',').filter { it.isNotEmpty() }.toSet()
                         runOnUiThread { onKeys(keys) }
@@ -146,8 +219,12 @@ class MainActivity : Activity() {
             // right after a tap, when the bags are about to change. Slower still
             // while the game isn't showing the square at all.
             val fast = assembler.waiting || SystemClock.uptimeMillis() - lastKeyAt < 3000
+            // While you walk the position changes all the time: look more often, so the
+            // arrow on the map keeps up, and slow down again once you stand still.
+            val walking = SystemClock.uptimeMillis() - movedAt < 3000
             val period = when {
                 fast -> 200L
+                walking -> 400L
                 misses > 30 -> 3000L
                 else -> 1000L
             }
@@ -156,11 +233,84 @@ class MainActivity : Activity() {
     }
 
     private fun onMessage(message: String) {
+        if (message.startsWith("TB1|") && !bagsFresh) {
+            bagsFresh = true
+            if (panel == Panel.BAGS) render()
+        }
         val parsed = GameState.parse(message, state)
-        status.text = if (parsed == null) "Connected, but the addon sent something unexpected." else "Connected"
+        status.text = if (parsed == null) "Connected, but the addon sent something unexpected: ${message.take(80)}" else "Connected"
         if (parsed == null || parsed == state) return
+        val moved = parsed.copy(x = state?.x, y = state?.y, facing = state?.facing) == state
         state = parsed
-        if (panel != Panel.KEYS) render()
+        val id = parsed.mapId
+        if (id != null && parsed.x != null && parsed.y != null && trail.add(id, parsed.x!!, parsed.y!!)) {
+            if (++trailUnsaved >= 30) saveTrail()
+        }
+        // Walking only moves the arrow; the rest of the tab stays as it is.
+        if (panel == Panel.MAP && moved && mapView != null) updateMap() else if (panel != Panel.KEYS) render()
+    }
+
+    private fun mapFile(id: Int) = java.io.File(java.io.File(filesDir, "maps").apply { mkdirs() }, "$id.png")
+
+    /**
+     * The world map is open in the game: one full screenshot, the map cut out of it and
+     * kept as that zone's background. Only when the same screenshot still shows the
+     * addon saying so, so a map closed in between is not taken. Runs on the reader thread.
+     */
+    private fun takeMapPicture(pic: MapPicture, message: String) {
+        fun fail(why: String) = runOnUiThread {
+            pictureNote = "Map picture not taken: $why"
+            if (panel == Panel.MAP) updateMap()
+        }
+        val px = screen.capture(rows = 4000) ?: return fail("the screenshot failed")
+        val found = StripDecoder.decode(px)
+        val frame = (found as? StripDecoder.Result.Ok)?.frame?.takeIf { it.crcOk }
+            ?: return fail("the data square was not readable in the screenshot (${(found as? StripDecoder.Result.Failed)?.reason ?: "damaged"})")
+        if (String(frame.payload) != message) return fail("the map was closed or changed before the screenshot")
+        val r = pic.onScreen(frame)
+        val l = r[0].coerceIn(0, px.width); val t = r[1].coerceIn(0, px.height)
+        val w = r[2].coerceIn(0, px.width) - l; val h = r[3].coerceIn(0, px.height) - t
+        if (w < 50 || h < 50) return fail("the map is outside the screen (${r.joinToString(",")} on ${px.width}x${px.height})")
+        val pixels = IntArray(w * h) { i -> px.rgb(l + i % w, t + i / w) or (0xFF shl 24) }
+        val bitmap = android.graphics.Bitmap.createBitmap(pixels, w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val saved = runCatching { mapFile(pic.mapId).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
+        if (saved.isFailure) return fail("could not save it (${saved.exceptionOrNull()?.message})")
+        runOnUiThread {
+            pictures.remove(pic.mapId)
+            pictureNote = "Took a picture of map ${pic.mapId} (${w}x$h)"
+            if (panel == Panel.MAP) updateMap()
+        }
+    }
+
+    /** What happened to the last map picture, shown under the map (the status line changes too often). */
+    private var pictureNote = ""
+    private var pictureLine: TextView? = null
+
+    /** Zone pictures loaded so far (null: there is none yet). */
+    private val pictures = HashMap<Int, android.graphics.Bitmap?>()
+
+    private fun picture(id: Int): android.graphics.Bitmap? = pictures.getOrPut(id) {
+        mapFile(id).takeIf { it.exists() }?.let { android.graphics.BitmapFactory.decodeFile(it.absolutePath) }
+    }
+
+    private fun onCharacter(c: CharacterInfo?, g: List<GearItem>) {
+        status.text = "Connected"
+        if (c == character && g == gear) return
+        character = c
+        gear = g
+        if (panel == Panel.CHARACTER) render()
+    }
+
+    private fun onMap(map: ZoneMap) {
+        status.text = "Connected"
+        if (map == zoneMap) return
+        zoneMap = map
+        if (panel == Panel.MAP) render()
+    }
+
+    private fun onChat(message: String) {
+        status.text = "Connected"
+        if (chat.add(message) == true && panel == Panel.CHAT) render()
     }
 
     private fun onKeys(keys: Set<String>) {
@@ -172,7 +322,7 @@ class MainActivity : Activity() {
 
     private fun onNames(changed: Boolean) {
         status.text = "Connected"
-        if (changed && panel == Panel.BAGS) render()
+        if (changed && (panel == Panel.BAGS || panel == Panel.CHARACTER)) render()
     }
 
     /** Long-press on the status line: try the next screen, in case the default one is the wrong one. */
@@ -200,6 +350,7 @@ class MainActivity : Activity() {
 
     private fun render() {
         content.removeAllViews()
+        mapView = null
         if (panel == Panel.KEYS) {
             renderKeys()
             return
@@ -211,21 +362,201 @@ class MainActivity : Activity() {
         }
         when (panel) {
             Panel.BAGS -> renderBags(s)
-            Panel.CHARACTER -> {
-                content.addView(line(s.name, TEXT, 26f, bold = true))
-                content.addView(line("Level ${s.level ?: "?"}", TEXT, 18f))
-                content.addView(line(money(s), GOLD, 18f))
-            }
-            Panel.MAP -> {
-                content.addView(line("Map ${s.mapId ?: "unknown"}", TEXT, 22f, bold = true))
-                if (s.x != null && s.y != null) {
-                    content.addView(line(String.format(Locale.US, "%.1f, %.1f", s.x!! * 100, s.y!! * 100), TEXT, 18f))
-                }
-                content.addView(line("The map picture comes in a later version.", DIM))
-            }
-            Panel.CHAT -> content.addView(line("Chat comes in a later version.", DIM))
+            Panel.CHARACTER -> renderCharacter(s)
+            Panel.MAP -> renderMap()
+            Panel.CHAT -> renderChat()
             Panel.KEYS -> {}
         }
+    }
+
+    /** Name, level, experience, item level, stats and what you wear. */
+    private fun renderCharacter(s: GameState) {
+        val c = character
+        if (c == null) content.addView(refreshButton())
+        content.addView(line(s.name, c?.classFile?.let { classColour(it) } ?: TEXT, 26f, bold = true))
+        content.addView(line(listOfNotNull("Level ${s.level ?: "?"}", c?.race, c?.className).joinToString(" "), TEXT, 17f))
+        c?.guild?.let { content.addView(line("<$it>", DIM, 15f)) }
+
+        val xp = c?.xp; val xpMax = c?.xpMax
+        if (xp != null && xpMax != null && xpMax > 0) {
+            val bar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 1000
+                progress = (xp * 1000 / xpMax).toInt()
+                secondaryProgress = (minOf(xpMax, xp + (c?.rested ?: 0)) * 1000 / xpMax).toInt()
+                progressTintList = android.content.res.ColorStateList.valueOf(Color.rgb(160, 80, 220))
+                secondaryProgressTintList = android.content.res.ColorStateList.valueOf(Color.rgb(70, 110, 200))
+            }
+            content.addView(bar, LinearLayout.LayoutParams(-1, dp(14)).apply { topMargin = dp(6) })
+            val rested = c?.rested?.takeIf { it > 0 }?.let { ", rested ${String.format(Locale.US, "%,d", it)}" } ?: ""
+            content.addView(line(String.format(Locale.US, "Experience %,d / %,d (%d%%)", xp, xpMax, xp * 100 / xpMax) + rested, DIM, 13f))
+        }
+
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(line(money(s), GOLD, 17f), LinearLayout.LayoutParams(0, -2, 1f))
+        c?.itemLevel?.let { row.addView(line(String.format(Locale.US, "Item level %.1f", it), TEXT, 17f)) }
+        content.addView(row)
+        if (c != null && c.stats.any { it != null }) {
+            val names = listOf("Strength", "Agility", "Stamina", "Intellect")
+            val parts = c.stats.mapIndexedNotNull { i, v -> v?.let { "${names[i]} $it" } } + listOfNotNull(c.armor?.let { "Armor $it" })
+            content.addView(line(parts.joinToString("  ·  "), DIM, 14f))
+        }
+
+        val worn = gear.associateBy { it.slot }
+        if (worn.values.any { (it.durability ?: 100) <= 20 }) content.addView(line("Some gear is almost broken: repair soon.", Color.rgb(255, 90, 90), 15f, bold = true))
+        val grid = GridLayout(this).apply { columnCount = 2 }
+        for (slot in GEAR_SLOTS) {
+            val g = worn[slot]
+            val known = g?.let { names[it.itemId] }
+            val dur = g?.durability
+            val detail = listOfNotNull(g?.itemLevel?.takeIf { it > 0 }?.let { "ilvl $it" }, dur?.let { "$it%" }).joinToString("  ·  ")
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(8), dp(4), dp(8), dp(4))
+                background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(CARD) }
+                addView(line(Gear.slotName(slot), DIM, 11f).apply { setPadding(0, 0, 0, 0) })
+                addView(line(if (g == null) "—" else known?.name ?: "#${g.itemId}", if (known != null) qualityColour(known.quality) else DIM, 14f).apply {
+                    setPadding(0, 0, 0, 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+                if (detail.isNotEmpty()) addView(line(detail, when {
+                    dur != null && dur <= 20 -> Color.rgb(255, 90, 90)
+                    dur != null && dur <= 50 -> Color.rgb(255, 210, 90)
+                    else -> DIM
+                }, 11f).apply { setPadding(0, 0, 0, 0) })
+            }
+            grid.addView(card, GridLayout.LayoutParams().apply {
+                width = 0
+                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                setMargins(dp(3), dp(3), dp(3), dp(3))
+            })
+        }
+        content.addView(grid)
+    }
+
+    /** One key that makes the addon send everything again. */
+    private fun refreshButton() = Button(this).apply {
+        isAllCaps = false
+        text = "Load from the game"
+        setOnClickListener {
+            pressKey(ActionKeys.REFRESH, onDone = { status.text = "Asked the game for everything again…" }) { err -> status.text = "Couldn't ask the game: $err" }
+        }
+    }
+
+    /** WoW's class colours. */
+    private fun classColour(file: String): Int = when (file) {
+        "WARRIOR" -> Color.rgb(198, 155, 109); "PALADIN" -> Color.rgb(244, 140, 186); "HUNTER" -> Color.rgb(170, 211, 114)
+        "ROGUE" -> Color.rgb(255, 244, 104); "PRIEST" -> Color.rgb(255, 255, 255); "DEATHKNIGHT" -> Color.rgb(196, 30, 58)
+        "SHAMAN" -> Color.rgb(0, 112, 221); "MAGE" -> Color.rgb(63, 199, 235); "WARLOCK" -> Color.rgb(135, 136, 238)
+        "MONK" -> Color.rgb(0, 255, 152); "DRUID" -> Color.rgb(255, 124, 10); "DEMONHUNTER" -> Color.rgb(163, 48, 201)
+        "EVOKER" -> Color.rgb(51, 147, 127)
+        else -> TEXT
+    }
+
+    /** The zone drawn from the addon's places, with the path walked and an arrow for you. */
+    private fun renderMap() {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val title = line("", TEXT, 18f, bold = true)
+        row.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+        val prefs = getPreferences(MODE_PRIVATE)
+        val view = MapView(this).apply {
+            close = prefs.getBoolean("mapClose", false)
+            onPlace = { p ->
+                status.text = MapView.kindName(p.kind) + (if (p.label.isEmpty()) "" else ": ${p.label}") +
+                    String.format(Locale.US, " (%.1f, %.1f)", p.x * 100, p.y * 100)
+            }
+        }
+        val zoom = Button(this).apply {
+            isAllCaps = false
+            text = if (view.close) "Whole zone" else "Around me"
+            setOnClickListener {
+                view.close = !view.close
+                prefs.edit().putBoolean("mapClose", view.close).apply()
+                text = if (view.close) "Whole zone" else "Around me"
+                view.invalidate()
+            }
+        }
+        val take = Button(this).apply {
+            isAllCaps = false
+            text = "Get zone picture"
+            // One key: the addon shows the zone's map art for a few seconds and the app takes it.
+            setOnClickListener {
+                pictureNote = "Asked the game for the zone picture…"
+                updateMap()
+                pressKey(ActionKeys.PICTURE) { err -> pictureNote = "Map picture not taken: $err"; updateMap() }
+            }
+        }
+        row.addView(take)
+        row.addView(zoom)
+        content.addView(row)
+        content.addView(view, LinearLayout.LayoutParams(-1, maxOf(dp(240), scroll.height - dp(90))))
+        val note = line("", DIM, 12f)
+        content.addView(note)
+        pictureLine = note
+        mapView = view
+        mapTitle = title
+        updateMap()
+    }
+
+    private fun updateMap() {
+        val view = mapView ?: return
+        val s = state
+        val map = zoneMap?.takeIf { it.mapId == s?.mapId }
+        view.zone = map
+        view.x = s?.x?.takeIf { it > 0 }
+        view.y = s?.y?.takeIf { it > 0 }
+        view.facing = s?.facing
+        view.trail = s?.mapId?.let { trail.paths[it] }.orEmpty()
+        view.picture = s?.mapId?.let { picture(it) }
+        val where = if (s?.x != null && s.y != null && s.x!! > 0) String.format(Locale.US, "  %.1f, %.1f", s.x!! * 100, s.y!! * 100) else ""
+        mapTitle?.text = (map?.zone?.ifEmpty { null } ?: "Map ${s?.mapId ?: "unknown"}") + where +
+            (if (s?.mapId != null && view.picture == null) "  (no picture yet)" else "")
+        pictureLine?.text = pictureNote
+        pictureLine?.visibility = if (pictureNote.isEmpty()) View.GONE else View.VISIBLE
+        view.invalidate()
+    }
+
+    /** The chat lines, newest at the bottom, coloured like WoW's chat frame. */
+    private fun renderChat() {
+        if (chat.lines.isEmpty()) {
+            content.addView(line("No chat yet. New lines in say, whispers, party, raid, guild and system messages show up here. Tap a line to whisper its sender.", DIM))
+            return
+        }
+        for (l in chat.lines.takeLast(100)) content.addView(chatLine(l))
+        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    private fun chatLine(l: ChatLine): TextView {
+        val n = l.name
+        val who = when {
+            n.isEmpty() -> ""
+            l.kind == "whisper" -> "$n whispers: "
+            l.kind == "whisper_to" -> "To $n: "
+            l.kind == "emote" -> "$n "
+            l.kind == "yell" -> "$n yells: "
+            l.channel.isNotEmpty() -> "[${l.channel}] $n: "
+            else -> "$n: "
+        }
+        val colour = when (l.kind) {
+            "whisper", "whisper_to" -> Color.rgb(255, 128, 255)
+            "bnwhisper", "bnwhisper_to" -> Color.rgb(0, 255, 246)
+            "party" -> Color.rgb(170, 170, 255)
+            "raid" -> Color.rgb(255, 127, 0)
+            "instance" -> Color.rgb(255, 127, 0)
+            "guild" -> Color.rgb(64, 255, 64)
+            "yell" -> Color.rgb(255, 64, 64)
+            "emote" -> Color.rgb(255, 128, 64)
+            "system" -> Color.rgb(255, 255, 0)
+            "channel" -> Color.rgb(255, 192, 192)
+            else -> TEXT
+        }
+        val view = line(who + l.text, colour, 15f).apply { setPadding(0, dp(2), 0, dp(2)) }
+        // Tap a line: one key that opens the whisper box for its sender in the game.
+        val key = chat.whisperSlot(l.sender)?.let { ActionKeys.forWhisper(it) } ?: return view
+        view.setOnClickListener {
+            pressKey(key, onDone = { status.text = "Whisper to $n: type your message in the game" }) { err ->
+                status.text = "Whisper to $n: $err"
+            }
+        }
+        return view
     }
 
     /** Key test: each button sends one key to the game's screen; `/thor keytest` in game prints what arrives. */
@@ -308,6 +639,10 @@ class MainActivity : Activity() {
                 val key = item.key?.let { ActionKeys.forIndex(it) }
                 val label = known?.name ?: "the item"
                 setOnClickListener { v ->
+                    if (!bagsFresh) {
+                        status.text = "These are your bags from before; tap Load from the game to update them before using items."
+                        return@setOnClickListener
+                    }
                     if (key == null) {
                         status.text = "$label has no tap key yet. Is the new addon loaded? /thor taps in game shows the keys."
                         return@setOnClickListener
@@ -330,7 +665,10 @@ class MainActivity : Activity() {
             })
         }
         content.addView(grid)
-        if (s.items.isEmpty()) content.addView(line("Your bags are empty.", DIM))
+        if (s.freeSlots == null || !bagsFresh) {
+            content.addView(line(if (s.freeSlots == null) "The bags haven't arrived yet." else "These are your bags from before; they update when the game sends them.", DIM))
+            content.addView(refreshButton())
+        } else if (s.items.isEmpty()) content.addView(line("Your bags are empty.", DIM))
         else if (s.items.any { it.key != null }) content.addView(line("Tap an item to use it.", DIM))
     }
 
@@ -362,6 +700,10 @@ class MainActivity : Activity() {
 
     private companion object {
         /** Must match ns.TestKeys in addon/ThorCompanion/KeyTest.lua. */
+        /** The paper doll's slots, left column then right, as Character.lua sends them. */
+        /** Message kinds kept across restarts. */
+        val KEPT = setOf("TS1|", "TB1|", "TM1|", "TP1|", "TQ1|")
+        val GEAR_SLOTS = listOf(1, 2, 3, 15, 5, 4, 19, 9, 10, 6, 7, 8, 11, 12, 13, 14, 16, 17)
         val TEST_KEYS = listOf("CTRL", "ALT").flatMap { mod -> (1..12).map { "$mod-F$it" } } - "ALT-F4" +
             listOf("F9", "SHIFT-F9", "CTRL-SHIFT-F9", "NUMPAD5")
         val BG = Color.rgb(16, 18, 22)

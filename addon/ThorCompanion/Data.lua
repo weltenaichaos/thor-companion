@@ -1,12 +1,15 @@
 -- Data.lua
 -- Collects non-secret, out-of-combat-safe state and hands it to the strip.
--- Three kinds of message, checked every half second, each sent only when it changed:
---   TS1|name|level|copper|mapID|x|y                         (small, changes while walking)
+-- Several kinds of message, checked every half second, each sent only when it changed:
+--   TS1|name|level|copper|mapID|x|y|facing                  (small, changes while walking)
 --   TB1|free/total|itemID:count:key,itemID:count:key,...    (the bags)
 --   (key: the slot's tap key, an index into ns.ActionKeys; left out when unbound)
 --   TN1|itemID,quality,name<newline>itemID,quality,name...   (names of bag items, a page at a time)
+--   TH1|...                                                   (new chat lines, see Chat.lua)
+--   TM1|...                                                   (places on the zone map, see Map.lua)
+--   TP1|... and TQ1|...                                       (character and gear, see Character.lua)
 -- The app keeps the names it has seen. State and bags are sent again every five
--- minutes and names every half hour, for an app that started after the game.
+-- minutes (names too), for an app that started after the game.
 
 local _, ns = ...
 
@@ -53,8 +56,11 @@ local function status()
         local pos = C_Map.GetPlayerMapPosition(mapID, "player")
         if pos then x, y = pos:GetXY() end
     end
-    return string.format("TS1|%s|%s|%d|%d|%.4f|%.4f", tostring(name), tostring(level),
-        GetMoney() or 0, mapID or 0, x or 0, y or 0)
+    -- Facing in radians (0 = north, counter-clockwise), in steps of about 6 degrees.
+    local facing = GetPlayerFacing and plain(GetPlayerFacing())
+    facing = type(facing) == "number" and string.format("%.1f", facing) or ""
+    return string.format("TS1|%s|%s|%d|%d|%.4f|%.4f|%s", tostring(name), tostring(level),
+        GetMoney() or 0, mapID or 0, x or 0, y or 0, facing)
 end
 
 local function bags()
@@ -69,11 +75,11 @@ local function itemName(id)
 end
 
 -- Each name is sent twice (so the app surely sees it), then left out until the
--- half-hourly refresh, so the square stays still unless something changes.
+-- next refresh, so the square stays still unless something changes.
 local SENDS = 2
 local REFRESH_TICKS = 600       -- five minutes: state and bags again, for an app started late
-local NAMES_REFRESH_TICKS = 3600 -- half an hour: names again (the app keeps the ones it has)
-local MOVE_SECONDS = 1.5         -- while walking, the position is sent at most this often
+local NAMES_REFRESH_TICKS = 600  -- five minutes: names again, for an app that was reinstalled
+local MOVE_SECONDS = 0.7         -- while walking, the position is sent at most this often
 local sentCount = {}
 
 -- The next page of names that still need sending, or nil when there are none.
@@ -81,7 +87,10 @@ local sentCount = {}
 local function namesPayload(peek)
     local room = ns.StripCapacity() - 4
     local parts, ids, used = {}, {}, 0
-    for _, id in ipairs(bagIDs) do
+    local all = {}
+    for _, id in ipairs(bagIDs) do all[#all + 1] = id end
+    for _, id in ipairs(ns.EquippedIDs()) do all[#all + 1] = id end
+    for _, id in ipairs(all) do
         if (sentCount[id] or 0) < SENDS then
             local name = itemName(id)
             if name then
@@ -101,15 +110,33 @@ local function namesPayload(peek)
     return "TN1|" .. table.concat(parts, "\n")
 end
 
+local chatAgain = false
+local function chat()
+    local p = ns.ChatPayload(chatAgain)
+    chatAgain = false
+    return p
+end
+
 -- The kinds take turns; one that has not changed since it was last sent is skipped.
-local kinds = { status, bags, namesPayload }
+-- The map places change as group members and rares move; a new zone goes out
+-- at once, otherwise at most every MAP_SECONDS.
+local MAP_SECONDS = 10
+local mapAt, mapID = -100, nil
+local function map()
+    -- Not even built while it could not be sent anyway.
+    local id = C_Map.GetBestMapForUnit("player")
+    if id and tostring(id) == mapID and GetTime() - mapAt < MAP_SECONDS then return nil end
+    return ns.MapPayload()
+end
+
+local kinds = { status, bags, namesPayload, chat, map, ns.CharacterPayload, ns.GearPayload }
 local lastSent = {}
 local turn = 0
 local statusAt = 0
 
--- The status line without its position, to tell walking from other changes.
+-- The status line without its position and facing, to tell walking from other changes.
 local function withoutPosition(p)
-    return p and (p:match("^(.*)|[^|]*|[^|]*$") or p)
+    return p and (p:match("^(.*)|[^|]*|[^|]*|[^|]*$") or p)
 end
 
 local function nextMessage()
@@ -124,11 +151,44 @@ local function nextMessage()
         end
         if p and p ~= lastSent[turn] then
             if turn == 1 then statusAt = GetTime() end
+            if turn == 5 then mapAt, mapID = GetTime(), p:match("^TM1|(%d+)") end
             lastSent[turn] = p
             return p
         end
     end
 end
+
+-- Everything again, from the start: for an app that was just started or
+-- reinstalled (its Refresh button presses ALT-SHIFT-F12).
+function ns.SendAllAgain()
+    lastSent, chatAgain, sentCount = {}, true, {}
+end
+
+local refreshOwner = CreateFrame("Frame")
+local refreshButton = CreateFrame("Button", "ThorCompanionRefresh", UIParent)
+refreshButton:RegisterForClicks("AnyUp", "AnyDown")
+local refreshedAt = 0
+refreshButton:SetScript("OnClick", function()
+    if GetTime() - refreshedAt < 0.5 then return end
+    refreshedAt = GetTime()
+    ns.SendAllAgain()
+end)
+local refreshPending = false
+
+function ns.BindRefreshKey()
+    if InCombatLockdown() then refreshPending = true return end
+    refreshPending = false
+    ClearOverrideBindings(refreshOwner)
+    if ns.TapsEnabled() then
+        SetOverrideBindingClick(refreshOwner, true, ns.ActionKeys[ns.RefreshKey], refreshButton:GetName())
+    end
+end
+
+refreshOwner:RegisterEvent("PLAYER_LOGIN")
+refreshOwner:RegisterEvent("PLAYER_REGEN_ENABLED")
+refreshOwner:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_LOGIN" or refreshPending then ns.BindRefreshKey() end
+end)
 
 local ticker
 local ticks = 0
@@ -139,10 +199,14 @@ f:SetScript("OnEvent", function()
     ns.StripShow(ThorCompanionDB.hidden ~= true)
     ticker = C_Timer.NewTicker(0.5, function()
         ticks = ticks + 1
-        if ticks % REFRESH_TICKS == 0 then lastSent = {} end
+        if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain = {}, true end
         if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
         local test = ns.KeyTestPayload and ns.KeyTestPayload()
         if test then ns.StripWrite(test) lastSent = {} return end
+        -- The zone picture is up: say where, so the app can take it.
+        local okPicture, picture = pcall(ns.MapPicturePayload)
+        if not okPicture then picture = nil end
+        if picture then ns.StripWrite(picture) lastSent = {} return end
         if ns.StripBusy() then return end
         local p = nextMessage()
         if p then ns.StripWrite(p) end
@@ -176,6 +240,13 @@ SlashCmdList.THORCOMPANION = function(msg)
         setting("cell", cell, 2, 8, "the cell size")
     elseif shadeStep then
         setting("shade", shadeStep, 4, 80, "the shade step")
+    elseif msg == "chat channels on" or msg == "chat channels off" then
+        ns.ChatChannels(msg == "chat channels on")
+        print("|cff66ccffThor Companion|r public channels in the app's chat " .. (msg:sub(-2) == "on" and "on" or "off"))
+    elseif msg == "map picture" then
+        ns.MapPictureShow()
+    elseif msg == "map" then
+        print("|cff66ccffThor Companion|r " .. ns.MapInfo())
     elseif msg == "info" then
         print("|cff66ccffThor Companion|r " .. ns.StripInfo())
     elseif msg == "taps" then
@@ -191,7 +262,7 @@ SlashCmdList.THORCOMPANION = function(msg)
         ns.StripShow(msg == "show")
     else
         print("|cff66ccffThor Companion|r " .. ns.StripInfo())
-        for _, kind in ipairs({ status, bags }) do
+        for _, kind in ipairs({ status, bags, ns.MapPayload }) do
             local ok, p = pcall(kind)
             print(ok and p or ("error: " .. tostring(p)))
         end

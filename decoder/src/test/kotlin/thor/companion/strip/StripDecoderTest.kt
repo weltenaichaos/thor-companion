@@ -44,6 +44,9 @@ class StripDecoderTest {
         assertEquals(7, frame.seq)
         assertEquals(StripDecoder.VERSION, frame.version)
         assertEquals(4.5, frame.cellPx, 0.05)
+        // The square sits at the right edge, 22 game pixels (33 screen pixels) down.
+        assertEquals(1920.0, frame.x + StripDecoder.COLS * frame.cellPx, 2.0)
+        assertEquals(33.0, frame.row - frame.cellPx / 2, 2.0)
     }
 
     @Test

@@ -12,11 +12,18 @@ later on will be one key press per tap.
 
 1. The **ThorCompanion addon** (`addon/ThorCompanion`) draws a small square of dark
    grey cells in the top-right corner of the game screen. It carries the data: name,
-   level, gold, map position, bag slots and bag contents, and the names of the items
-   in your bags. It only changes when the data does; a longer message (the bags) is
+   level, gold, map position, bag slots and bag contents, the names of the items
+   in your bags, new chat lines, and the places on the zone map (quests, flight masters,
+   dungeons, rares, your map pin, group members), and your character sheet (class,
+   experience, item level, stats, the gear you wear with its durability). It only changes when the data does; a longer message (the bags) is
    split into parts that are shown in turn.
 2. The **app** (`app/`) runs on the bottom screen. It captures the top screen a
    few times a second, reads the square and draws the panels.
+   The Map tab draws the zone from those places, with an arrow for you and a line where
+   you walked; "Around me" zooms in. Its background is a picture of the zone the app
+   takes itself: "Get zone picture" presses one key (ALT-SHIFT-F11), the addon shows the
+   zone's map art (no quest icons, arrows or other addons' marks) in the middle of the
+   screen for 3 seconds and says where, and the app cuts it out of one screenshot. Until then the background is a grid.
 3. The **decoder** (`decoder/`) is plain Kotlin that the app uses. It is tested
    against a square drawn by the addon, upscaled and colour-shifted like on the Thor.
 
@@ -40,10 +47,24 @@ when the game starts. In game:
   lightest is 3 × N out of 255). Lower is darker and harder for the app to read.
 - `/thor shape line` draws the same cells as one thin line along the top edge instead;
   `/thor shape square` goes back.
+- `/thor map` prints what the zone picture did last and the places sent for the Map tab;
+  `/thor map picture` shows the zone picture like the app's button.
 - `/thor hide` and `/thor show` turn the square off and on.
+- `/thor chat channels on` adds public channels (General, Trade, ...) to the app's Chat tab;
+  `off` (the default) leaves them out. Say, yell, emotes, whispers, party, raid, instance,
+  guild and system lines are always sent. During boss fights the game hides chat from
+  addons, so those lines show as hidden.
+  Tapping a line in the Chat tab starts a whisper to whoever wrote it: the app presses one
+  key (ALT-SHIFT-F1..F10, one per recent sender) and the game opens the chat box with
+  "/w Name "; you type and send the message in the game.
+- ALT-SHIFT-F12 makes the addon send everything again; the app's "Load from the game"
+  button presses it (shown while the bags or character haven't arrived, for example right
+  after installing the app). The app also keeps the last bags, character and map across
+  restarts, but bag taps wait until fresh bags have arrived.
 - `/thor taps off` and `/thor taps on` turn tap-to-use off and on (default on). With it on,
   every bag slot has its own key (CTRL-F1 and up), bound out of combat, and tapping an
-  item in the app's Bags tab presses that one key, which uses the item.
+  item in the app's Bags tab presses that one key, which uses the item. It also turns the
+  whisper keys off and on.
 - `/thor keytest` binds the CTRL and ALT function keys to a button that only prints their name, to check that
   the app's Keys tab reaches the game (keys that arrive turn green in the app). Run it again to give the keys back.
 

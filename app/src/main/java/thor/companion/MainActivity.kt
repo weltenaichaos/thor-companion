@@ -20,6 +20,8 @@ import thor.companion.strip.ChatLog
 import thor.companion.strip.ItemNames
 import thor.companion.strip.PartAssembler
 import thor.companion.strip.StripDecoder
+import thor.companion.strip.Trail
+import thor.companion.strip.ZoneMap
 import java.util.Locale
 
 /**
@@ -38,6 +40,11 @@ class MainActivity : Activity() {
     private var panel = Panel.BAGS
     private var state: GameState? = null
     private val chat = ChatLog()
+    private var zoneMap: ZoneMap? = null
+    private val trail = Trail()
+    private var trailUnsaved = 0
+    private var mapView: MapView? = null
+    private var mapTitle: TextView? = null
     private lateinit var scroll: ScrollView
     private var gotKeys: Set<String> = emptySet()
     private var keyResult = ""
@@ -85,6 +92,7 @@ class MainActivity : Activity() {
         scroll = ScrollView(this).apply { addView(content) }
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
+        runCatching { trail.load(trailFile().readText()) }
         show(Panel.BAGS)
         status.text = "Looking for the game…"
     }
@@ -96,7 +104,16 @@ class MainActivity : Activity() {
 
     override fun onStop() {
         worker = null
+        saveTrail()
         super.onStop()
+    }
+
+    private fun trailFile() = java.io.File(filesDir, "trail.txt")
+
+    private fun saveTrail() {
+        if (trailUnsaved == 0) return
+        trailUnsaved = 0
+        runCatching { trailFile().writeText(trail.save()) }
     }
 
     private fun loop() {
@@ -127,6 +144,7 @@ class MainActivity : Activity() {
                 when {
                     message == null -> {}
                     message.startsWith("TH1|") -> runOnUiThread { onChat(message) }
+                    message.startsWith("TM1|") -> ZoneMap.parse(message)?.let { runOnUiThread { onMap(it) } }
                     message.startsWith("TK1|") -> {
                         val keys = message.substring(4).split(',').filter { it.isNotEmpty() }.toSet()
                         runOnUiThread { onKeys(keys) }
@@ -165,8 +183,21 @@ class MainActivity : Activity() {
         val parsed = GameState.parse(message, state)
         status.text = if (parsed == null) "Connected, but the addon sent something unexpected." else "Connected"
         if (parsed == null || parsed == state) return
+        val moved = parsed.copy(x = state?.x, y = state?.y, facing = state?.facing) == state
         state = parsed
-        if (panel != Panel.KEYS) render()
+        val id = parsed.mapId
+        if (id != null && parsed.x != null && parsed.y != null && trail.add(id, parsed.x!!, parsed.y!!)) {
+            if (++trailUnsaved >= 30) saveTrail()
+        }
+        // Walking only moves the arrow; the rest of the tab stays as it is.
+        if (panel == Panel.MAP && moved && mapView != null) updateMap() else if (panel != Panel.KEYS) render()
+    }
+
+    private fun onMap(map: ZoneMap) {
+        status.text = "Connected"
+        if (map == zoneMap) return
+        zoneMap = map
+        if (panel == Panel.MAP) render()
     }
 
     private fun onChat(message: String) {
@@ -211,6 +242,7 @@ class MainActivity : Activity() {
 
     private fun render() {
         content.removeAllViews()
+        mapView = null
         if (panel == Panel.KEYS) {
             renderKeys()
             return
@@ -227,16 +259,56 @@ class MainActivity : Activity() {
                 content.addView(line("Level ${s.level ?: "?"}", TEXT, 18f))
                 content.addView(line(money(s), GOLD, 18f))
             }
-            Panel.MAP -> {
-                content.addView(line("Map ${s.mapId ?: "unknown"}", TEXT, 22f, bold = true))
-                if (s.x != null && s.y != null) {
-                    content.addView(line(String.format(Locale.US, "%.1f, %.1f", s.x!! * 100, s.y!! * 100), TEXT, 18f))
-                }
-                content.addView(line("The map picture comes in a later version.", DIM))
-            }
+            Panel.MAP -> renderMap()
             Panel.CHAT -> renderChat()
             Panel.KEYS -> {}
         }
+    }
+
+    /** The zone drawn from the addon's places, with the path walked and an arrow for you. */
+    private fun renderMap() {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val title = line("", TEXT, 18f, bold = true)
+        row.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+        val prefs = getPreferences(MODE_PRIVATE)
+        val view = MapView(this).apply {
+            close = prefs.getBoolean("mapClose", false)
+            onPlace = { p ->
+                status.text = MapView.kindName(p.kind) + (if (p.label.isEmpty()) "" else ": ${p.label}") +
+                    String.format(Locale.US, " (%.1f, %.1f)", p.x * 100, p.y * 100)
+            }
+        }
+        val zoom = Button(this).apply {
+            isAllCaps = false
+            text = if (view.close) "Whole zone" else "Around me"
+            setOnClickListener {
+                view.close = !view.close
+                prefs.edit().putBoolean("mapClose", view.close).apply()
+                text = if (view.close) "Whole zone" else "Around me"
+                view.invalidate()
+            }
+        }
+        row.addView(zoom)
+        content.addView(row)
+        content.addView(view, LinearLayout.LayoutParams(-1, maxOf(dp(240), scroll.height - dp(90))))
+        content.addView(line("Tap a marker for its name. ! quest, ? turn in, F flight master, D dungeon, ★ rare, ● group. The yellow line is where you walked.", DIM, 12f))
+        mapView = view
+        mapTitle = title
+        updateMap()
+    }
+
+    private fun updateMap() {
+        val view = mapView ?: return
+        val s = state
+        val map = zoneMap?.takeIf { it.mapId == s?.mapId }
+        view.zone = map
+        view.x = s?.x?.takeIf { it > 0 }
+        view.y = s?.y?.takeIf { it > 0 }
+        view.facing = s?.facing
+        view.trail = s?.mapId?.let { trail.paths[it] }.orEmpty()
+        val where = if (s?.x != null && s.y != null && s.x!! > 0) String.format(Locale.US, "  %.1f, %.1f", s.x!! * 100, s.y!! * 100) else ""
+        mapTitle?.text = (map?.zone?.ifEmpty { null } ?: "Map ${s?.mapId ?: "unknown"}") + where
+        view.invalidate()
     }
 
     /** The chat lines, newest at the bottom, coloured like WoW's chat frame. */

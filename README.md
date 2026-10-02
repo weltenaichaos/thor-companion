@@ -13,10 +13,14 @@ later on will be one key press per tap.
 1. The **ThorCompanion addon** (`addon/ThorCompanion`) draws a small square of dark
    grey cells in the top-right corner of the game screen. It carries the data: name,
    level, gold, map position, bag slots and bag contents, the names of the items
-   in your bags, and new chat lines. It only changes when the data does; a longer message (the bags) is
+   in your bags, new chat lines, and the places on the zone map (quests, flight masters,
+   dungeons, rares, your map pin, group members). It only changes when the data does; a longer message (the bags) is
    split into parts that are shown in turn.
 2. The **app** (`app/`) runs on the bottom screen. It captures the top screen a
    few times a second, reads the square and draws the panels.
+   The Map tab draws the zone from those places on a plain grid (the app can't read the
+   game's map picture), with an arrow for you and a line where you walked; "Around me"
+   zooms in.
 3. The **decoder** (`decoder/`) is plain Kotlin that the app uses. It is tested
    against a square drawn by the addon, upscaled and colour-shifted like on the Thor.
 

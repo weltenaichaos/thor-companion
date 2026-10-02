@@ -1,11 +1,12 @@
 -- Data.lua
 -- Collects non-secret, out-of-combat-safe state and hands it to the strip.
 -- Four kinds of message, checked every half second, each sent only when it changed:
---   TS1|name|level|copper|mapID|x|y                         (small, changes while walking)
+--   TS1|name|level|copper|mapID|x|y|facing                  (small, changes while walking)
 --   TB1|free/total|itemID:count:key,itemID:count:key,...    (the bags)
 --   (key: the slot's tap key, an index into ns.ActionKeys; left out when unbound)
 --   TN1|itemID,quality,name<newline>itemID,quality,name...   (names of bag items, a page at a time)
 --   TH1|...                                                   (new chat lines, see Chat.lua)
+--   TM1|...                                                   (places on the zone map, see Map.lua)
 -- The app keeps the names it has seen. State and bags are sent again every five
 -- minutes and names every half hour, for an app that started after the game.
 
@@ -54,8 +55,11 @@ local function status()
         local pos = C_Map.GetPlayerMapPosition(mapID, "player")
         if pos then x, y = pos:GetXY() end
     end
-    return string.format("TS1|%s|%s|%d|%d|%.4f|%.4f", tostring(name), tostring(level),
-        GetMoney() or 0, mapID or 0, x or 0, y or 0)
+    -- Facing in radians (0 = north, counter-clockwise), in steps of about 6 degrees.
+    local facing = GetPlayerFacing and plain(GetPlayerFacing())
+    facing = type(facing) == "number" and string.format("%.1f", facing) or ""
+    return string.format("TS1|%s|%s|%d|%d|%.4f|%.4f|%s", tostring(name), tostring(level),
+        GetMoney() or 0, mapID or 0, x or 0, y or 0, facing)
 end
 
 local function bags()
@@ -110,14 +114,25 @@ local function chat()
 end
 
 -- The kinds take turns; one that has not changed since it was last sent is skipped.
-local kinds = { status, bags, namesPayload, chat }
+-- The map places change as group members and rares move; a new zone goes out
+-- at once, otherwise at most every MAP_SECONDS.
+local MAP_SECONDS = 10
+local mapAt, mapID = -100, nil
+local function map()
+    local p = ns.MapPayload()
+    local id = p and p:match("^TM1|(%d+)")
+    if id == mapID and GetTime() - mapAt < MAP_SECONDS then return nil end
+    return p
+end
+
+local kinds = { status, bags, namesPayload, chat, map }
 local lastSent = {}
 local turn = 0
 local statusAt = 0
 
--- The status line without its position, to tell walking from other changes.
+-- The status line without its position and facing, to tell walking from other changes.
 local function withoutPosition(p)
-    return p and (p:match("^(.*)|[^|]*|[^|]*$") or p)
+    return p and (p:match("^(.*)|[^|]*|[^|]*|[^|]*$") or p)
 end
 
 local function nextMessage()
@@ -132,6 +147,7 @@ local function nextMessage()
         end
         if p and p ~= lastSent[turn] then
             if turn == 1 then statusAt = GetTime() end
+            if turn == 5 then mapAt, mapID = GetTime(), p:match("^TM1|(%d+)") end
             lastSent[turn] = p
             return p
         end
@@ -202,7 +218,7 @@ SlashCmdList.THORCOMPANION = function(msg)
         ns.StripShow(msg == "show")
     else
         print("|cff66ccffThor Companion|r " .. ns.StripInfo())
-        for _, kind in ipairs({ status, bags }) do
+        for _, kind in ipairs({ status, bags, ns.MapPayload }) do
             local ok, p = pcall(kind)
             print(ok and p or ("error: " .. tostring(p)))
         end

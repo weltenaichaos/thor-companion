@@ -25,11 +25,13 @@ local PART_BYTES = math.floor(((COLS - 1) * COLS - CALIB) / 4) - 4 - 2   -- 87
 local MAX_PARTS = 6
 local STEP_SECONDS = 0.35   -- per part; the app captures about five times a second
 local ROUNDS = 2
+local MIN_SECONDS = 1.5  -- every message stays at least this long; the app looks once a second when idle
 
 local frame, cells
 local msgSeq = 0
 local message, parts, part, rounds = nil, {}, 1, 0
 local stepper
+local shownAt = 0
 
 local function settings()
     local db = ThorCompanionDB or {}
@@ -140,10 +142,11 @@ function ns.StripCapacity()
     return PART_BYTES * MAX_PARTS
 end
 
--- True while a new message is still being shown for the first time; the caller
--- waits with the next one, so the app sees every part.
+-- True while a new message is still being shown for the first time, or has not
+-- been up for MIN_SECONDS; the caller waits with the next one, so the app sees
+-- every part.
 function ns.StripBusy()
-    return #parts > 1 and rounds >= ROUNDS
+    return GetTime() - shownAt < MIN_SECONDS or (#parts > 1 and rounds >= ROUNDS)
 end
 
 function ns.StripWrite(payload)
@@ -157,6 +160,7 @@ function ns.StripWrite(payload)
         parts[p] = payload:sub((p - 1) * PART_BYTES + 1, p * PART_BYTES)
     end
     part, rounds = 1, ROUNDS
+    shownAt = GetTime()
     draw(1)
     if #parts > 1 and not stepper then stepper = C_Timer.NewTicker(STEP_SECONDS, step) end
 end

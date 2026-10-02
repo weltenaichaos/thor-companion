@@ -57,6 +57,14 @@ class StripDecoderTest {
     }
 
     @Test
+    fun usesTheLastPositionAndFallsBackWhenItMoved() {
+        val px = render(listOf("TS1|x|1|0|0|0|0".toByteArray()), seq = 3)[0]
+        val row = decodeOk(px).row
+        assertEquals(row, assertIs<StripDecoder.Result.Ok>(StripDecoder.decode(px, near = row)).frame.row)
+        assertTrue(assertIs<StripDecoder.Result.Ok>(StripDecoder.decode(px, near = 300)).frame.crcOk)
+    }
+
+    @Test
     fun reportsBadCrc() {
         val px = render(listOf("TS1|x|1|0|0|0|0".toByteArray()), seq = 1, flipCell = 40)[0]
         assertFalse(decodeOk(px).crcOk)

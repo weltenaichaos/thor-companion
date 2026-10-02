@@ -52,8 +52,14 @@ object StripDecoder {
         data class Failed(val reason: String) : Result()
     }
 
-    fun decode(px: Pixels): Result {
-        val (x0, y0, cell) = findSquare(px) ?: return Result.Failed("data square not found")
+    /**
+     * Decodes the square. [near] is the row where it was last found (StripFrame.row):
+     * only the rows around it are searched first, which is much quicker.
+     */
+    fun decode(px: Pixels, near: Int = -1): Result {
+        val found = (if (near >= 0) findSquare(px, near - 16, near + 16) else null)
+            ?: findSquare(px, 0, SCAN_ROWS)
+        val (x0, y0, cell) = found ?: return Result.Failed("data square not found")
 
         fun colour(i: Int): Int {
             val row = (COLS + i) / COLS
@@ -164,10 +170,10 @@ object StripDecoder {
     }
 
     /** (x of the first cell, middle y of the sync row, cell size) or null. */
-    private fun findSquare(px: Pixels): Triple<Double, Int, Double>? {
+    private fun findSquare(px: Pixels, from: Int, to: Int): Triple<Double, Int, Double>? {
         var first = -1
         var firstSync: Pair<Double, Double>? = null
-        for (y in 0 until minOf(px.height, SCAN_ROWS)) {
+        for (y in maxOf(0, from) until minOf(px.height, to)) {
             val found = syncAt(px, y)
             if (found != null && first < 0) {
                 first = y
@@ -187,6 +193,9 @@ class PartAssembler {
     private var seq = -1
     private var parts: Array<ByteArray?> = emptyArray()
     private var done = -1
+
+    /** True while part of a message has been seen but not all of it. */
+    val waiting: Boolean get() = done != seq && parts.size > 1
 
     /** The whole message once [frame] completes it (once per message), else null. */
     fun add(frame: StripFrame): String? {

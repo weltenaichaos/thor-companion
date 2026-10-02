@@ -39,6 +39,9 @@ class MainActivity : Activity() {
     private var keyResult = ""
 
     @Volatile private var worker: Thread? = null
+    @Volatile private var lastKeyAt = 0L
+    /** Start time and duration (ms) of each capture in the last minute, for the battery check. */
+    private val captures = java.util.ArrayDeque<LongArray>()
     /** Key presses go out one at a time, in the order they were tapped. */
     private val keys = java.util.concurrent.Executors.newSingleThreadExecutor()
 
@@ -100,14 +103,20 @@ class MainActivity : Activity() {
             return
         }
         var misses = 0
+        var near = -1
         val assembler = PartAssembler()
         while (worker === Thread.currentThread()) {
             val t0 = SystemClock.uptimeMillis()
             val px = screen.capture()
-            val result = if (px == null) null else StripDecoder.decode(px)
+            val result = if (px == null) null else StripDecoder.decode(px, near)
             val frame = (result as? StripDecoder.Result.Ok)?.frame?.takeIf { it.crcOk }
+            synchronized(captures) {
+                captures.addLast(longArrayOf(t0, SystemClock.uptimeMillis() - t0))
+                while (captures.first()[0] < t0 - 60_000) captures.removeFirst()
+            }
             if (frame != null) {
                 misses = 0
+                near = frame.row
                 val message = assembler.add(frame)
                 val page = message?.let { ItemNames.parse(it) }
                 when {
@@ -123,6 +132,7 @@ class MainActivity : Activity() {
                     else -> runOnUiThread { onMessage(message) }
                 }
             } else if (++misses == 4) {
+                near = -1
                 val why = when {
                     px == null -> "the capture failed"
                     result is StripDecoder.Result.Failed -> result.reason
@@ -130,9 +140,18 @@ class MainActivity : Activity() {
                 }
                 runOnUiThread { status.text = "No data from the addon ($why). Is the game open with ThorCompanion on?" }
             }
-            // The addon shows each part of a longer message for about a third of a
-            // second, so read often enough to see every part.
-            SystemClock.sleep((200 - (SystemClock.uptimeMillis() - t0)).coerceIn(30, 200))
+            // Reading the screen is what costs battery, so look once a second while
+            // nothing is going on. The addon shows each part of a longer message for
+            // about a third of a second, so read fast while one is coming in, and
+            // right after a tap, when the bags are about to change. Slower still
+            // while the game isn't showing the square at all.
+            val fast = assembler.waiting || SystemClock.uptimeMillis() - lastKeyAt < 3000
+            val period = when {
+                fast -> 200L
+                misses > 30 -> 3000L
+                else -> 1000L
+            }
+            SystemClock.sleep((period - (SystemClock.uptimeMillis() - t0)).coerceIn(30, period))
         }
     }
 
@@ -238,11 +257,21 @@ class MainActivity : Activity() {
         }
         content.addView(grid)
         content.addView(result)
+        content.addView(line(captureStats(), DIM).apply { setPadding(0, dp(16), 0, 0) })
+    }
+
+    /** Battery check: how often and how long the app read the game's screen in the last minute. */
+    private fun captureStats(): String {
+        val (count, total) = synchronized(captures) { captures.size to captures.sumOf { it[1] } }
+        if (count == 0) return "Battery check: the game's screen hasn't been read in the last minute."
+        return "Battery check: read the game's screen $count times in the last minute, " +
+            "${total / count} ms each (busy ${total * 100 / 60_000}% of the time). Tap the Keys tab again to refresh."
     }
 
     /** Sends one key to the game's screen; the callbacks run on the UI thread. */
     private fun pressKey(key: String, onDone: () -> Unit = {}, onError: (String) -> Unit) {
         val target = gameDisplay()
+        lastKeyAt = SystemClock.uptimeMillis()
         keys.execute {
             val err = KeySender.send(this, target, key)
             runOnUiThread { if (err == null) onDone() else onError(err) }

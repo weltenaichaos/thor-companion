@@ -1,12 +1,13 @@
 -- Data.lua
 -- Collects non-secret, out-of-combat-safe state and hands it to the strip.
--- Four kinds of message, checked every half second, each sent only when it changed:
+-- Several kinds of message, checked every half second, each sent only when it changed:
 --   TS1|name|level|copper|mapID|x|y|facing                  (small, changes while walking)
 --   TB1|free/total|itemID:count:key,itemID:count:key,...    (the bags)
 --   (key: the slot's tap key, an index into ns.ActionKeys; left out when unbound)
 --   TN1|itemID,quality,name<newline>itemID,quality,name...   (names of bag items, a page at a time)
 --   TH1|...                                                   (new chat lines, see Chat.lua)
 --   TM1|...                                                   (places on the zone map, see Map.lua)
+--   TP1|... and TQ1|...                                       (character and gear, see Character.lua)
 -- The app keeps the names it has seen. State and bags are sent again every five
 -- minutes (names too), for an app that started after the game.
 
@@ -86,7 +87,10 @@ local sentCount = {}
 local function namesPayload(peek)
     local room = ns.StripCapacity() - 4
     local parts, ids, used = {}, {}, 0
-    for _, id in ipairs(bagIDs) do
+    local all = {}
+    for _, id in ipairs(bagIDs) do all[#all + 1] = id end
+    for _, id in ipairs(ns.EquippedIDs()) do all[#all + 1] = id end
+    for _, id in ipairs(all) do
         if (sentCount[id] or 0) < SENDS then
             local name = itemName(id)
             if name then
@@ -119,13 +123,13 @@ end
 local MAP_SECONDS = 10
 local mapAt, mapID = -100, nil
 local function map()
-    local p = ns.MapPayload()
-    local id = p and p:match("^TM1|(%d+)")
-    if id == mapID and GetTime() - mapAt < MAP_SECONDS then return nil end
-    return p
+    -- Not even built while it could not be sent anyway.
+    local id = C_Map.GetBestMapForUnit("player")
+    if id and tostring(id) == mapID and GetTime() - mapAt < MAP_SECONDS then return nil end
+    return ns.MapPayload()
 end
 
-local kinds = { status, bags, namesPayload, chat, map }
+local kinds = { status, bags, namesPayload, chat, map, ns.CharacterPayload, ns.GearPayload }
 local lastSent = {}
 local turn = 0
 local statusAt = 0
@@ -165,7 +169,6 @@ f:SetScript("OnEvent", function()
         ticks = ticks + 1
         if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain = {}, true end
         if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
-        ns.StripFollowMap()
         local test = ns.KeyTestPayload and ns.KeyTestPayload()
         if test then ns.StripWrite(test) lastSent = {} return end
         -- The zone picture is up: say where, so the app can take it.
@@ -212,8 +215,6 @@ SlashCmdList.THORCOMPANION = function(msg)
         ns.MapPictureShow()
     elseif msg == "map" then
         print("|cff66ccffThor Companion|r " .. ns.MapInfo())
-        print("interface shown=" .. tostring(UIParent:IsShown()) .. ", square on " ..
-            (ns.HostFrame() == UIParent and "interface" or "world map") .. ", " .. ns.StripInfo())
     elseif msg == "info" then
         print("|cff66ccffThor Companion|r " .. ns.StripInfo())
     elseif msg == "taps" then

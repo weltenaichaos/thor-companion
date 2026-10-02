@@ -15,7 +15,10 @@ import android.widget.ScrollView
 import android.widget.TextView
 import thor.companion.strip.ActionKeys
 import thor.companion.strip.GameState
+import thor.companion.strip.CharacterInfo
 import thor.companion.strip.ChatLine
+import thor.companion.strip.Gear
+import thor.companion.strip.GearItem
 import thor.companion.strip.ChatLog
 import thor.companion.strip.ItemNames
 import thor.companion.strip.MapPicture
@@ -42,6 +45,8 @@ class MainActivity : Activity() {
     private var state: GameState? = null
     private val chat = ChatLog()
     private var zoneMap: ZoneMap? = null
+    private var character: CharacterInfo? = null
+    private var gear: List<GearItem> = emptyList()
     private val trail = Trail()
     private var trailUnsaved = 0
     private var mapView: MapView? = null
@@ -149,6 +154,8 @@ class MainActivity : Activity() {
                     message == null -> {}
                     message.startsWith("TH1|") -> runOnUiThread { onChat(message) }
                     message.startsWith("TM1|") -> ZoneMap.parse(message)?.let { runOnUiThread { onMap(it) } }
+                    message.startsWith("TP1|") -> CharacterInfo.parse(message)?.let { runOnUiThread { onCharacter(it, gear) } }
+                    message.startsWith("TQ1|") -> Gear.parse(message)?.let { runOnUiThread { onCharacter(character, it) } }
                     message.startsWith("TW1|") -> MapPicture.parse(message)?.let { takeMapPicture(it, message) }
                     message.startsWith("TK1|") -> {
                         val keys = message.substring(4).split(',').filter { it.isNotEmpty() }.toSet()
@@ -245,6 +252,14 @@ class MainActivity : Activity() {
         mapFile(id).takeIf { it.exists() }?.let { android.graphics.BitmapFactory.decodeFile(it.absolutePath) }
     }
 
+    private fun onCharacter(c: CharacterInfo?, g: List<GearItem>) {
+        status.text = "Connected"
+        if (c == character && g == gear) return
+        character = c
+        gear = g
+        if (panel == Panel.CHARACTER) render()
+    }
+
     private fun onMap(map: ZoneMap) {
         status.text = "Connected"
         if (map == zoneMap) return
@@ -266,7 +281,7 @@ class MainActivity : Activity() {
 
     private fun onNames(changed: Boolean) {
         status.text = "Connected"
-        if (changed && panel == Panel.BAGS) render()
+        if (changed && (panel == Panel.BAGS || panel == Panel.CHARACTER)) render()
     }
 
     /** Long-press on the status line: try the next screen, in case the default one is the wrong one. */
@@ -306,15 +321,83 @@ class MainActivity : Activity() {
         }
         when (panel) {
             Panel.BAGS -> renderBags(s)
-            Panel.CHARACTER -> {
-                content.addView(line(s.name, TEXT, 26f, bold = true))
-                content.addView(line("Level ${s.level ?: "?"}", TEXT, 18f))
-                content.addView(line(money(s), GOLD, 18f))
-            }
+            Panel.CHARACTER -> renderCharacter(s)
             Panel.MAP -> renderMap()
             Panel.CHAT -> renderChat()
             Panel.KEYS -> {}
         }
+    }
+
+    /** Name, level, experience, item level, stats and what you wear. */
+    private fun renderCharacter(s: GameState) {
+        val c = character
+        content.addView(line(s.name, c?.classFile?.let { classColour(it) } ?: TEXT, 26f, bold = true))
+        content.addView(line(listOfNotNull("Level ${s.level ?: "?"}", c?.race, c?.className).joinToString(" "), TEXT, 17f))
+        c?.guild?.let { content.addView(line("<$it>", DIM, 15f)) }
+
+        val xp = c?.xp; val xpMax = c?.xpMax
+        if (xp != null && xpMax != null && xpMax > 0) {
+            val bar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 1000
+                progress = (xp * 1000 / xpMax).toInt()
+                secondaryProgress = (minOf(xpMax, xp + (c?.rested ?: 0)) * 1000 / xpMax).toInt()
+                progressTintList = android.content.res.ColorStateList.valueOf(Color.rgb(160, 80, 220))
+                secondaryProgressTintList = android.content.res.ColorStateList.valueOf(Color.rgb(70, 110, 200))
+            }
+            content.addView(bar, LinearLayout.LayoutParams(-1, dp(14)).apply { topMargin = dp(6) })
+            val rested = c?.rested?.takeIf { it > 0 }?.let { ", rested ${String.format(Locale.US, "%,d", it)}" } ?: ""
+            content.addView(line(String.format(Locale.US, "Experience %,d / %,d (%d%%)", xp, xpMax, xp * 100 / xpMax) + rested, DIM, 13f))
+        }
+
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(line(money(s), GOLD, 17f), LinearLayout.LayoutParams(0, -2, 1f))
+        c?.itemLevel?.let { row.addView(line(String.format(Locale.US, "Item level %.1f", it), TEXT, 17f)) }
+        content.addView(row)
+        if (c != null && c.stats.any { it != null }) {
+            val names = listOf("Strength", "Agility", "Stamina", "Intellect")
+            val parts = c.stats.mapIndexedNotNull { i, v -> v?.let { "${names[i]} $it" } } + listOfNotNull(c.armor?.let { "Armor $it" })
+            content.addView(line(parts.joinToString("  ·  "), DIM, 14f))
+        }
+
+        val worn = gear.associateBy { it.slot }
+        if (worn.values.any { (it.durability ?: 100) <= 20 }) content.addView(line("Some gear is almost broken: repair soon.", Color.rgb(255, 90, 90), 15f, bold = true))
+        val grid = GridLayout(this).apply { columnCount = 2 }
+        for (slot in GEAR_SLOTS) {
+            val g = worn[slot]
+            val known = g?.let { names[it.itemId] }
+            val dur = g?.durability
+            val detail = listOfNotNull(g?.itemLevel?.takeIf { it > 0 }?.let { "ilvl $it" }, dur?.let { "$it%" }).joinToString("  ·  ")
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(8), dp(4), dp(8), dp(4))
+                background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(CARD) }
+                addView(line(Gear.slotName(slot), DIM, 11f).apply { setPadding(0, 0, 0, 0) })
+                addView(line(if (g == null) "—" else known?.name ?: "#${g.itemId}", if (known != null) qualityColour(known.quality) else DIM, 14f).apply {
+                    setPadding(0, 0, 0, 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+                if (detail.isNotEmpty()) addView(line(detail, when {
+                    dur != null && dur <= 20 -> Color.rgb(255, 90, 90)
+                    dur != null && dur <= 50 -> Color.rgb(255, 210, 90)
+                    else -> DIM
+                }, 11f).apply { setPadding(0, 0, 0, 0) })
+            }
+            grid.addView(card, GridLayout.LayoutParams().apply {
+                width = 0
+                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                setMargins(dp(3), dp(3), dp(3), dp(3))
+            })
+        }
+        content.addView(grid)
+    }
+
+    /** WoW's class colours. */
+    private fun classColour(file: String): Int = when (file) {
+        "WARRIOR" -> Color.rgb(198, 155, 109); "PALADIN" -> Color.rgb(244, 140, 186); "HUNTER" -> Color.rgb(170, 211, 114)
+        "ROGUE" -> Color.rgb(255, 244, 104); "PRIEST" -> Color.rgb(255, 255, 255); "DEATHKNIGHT" -> Color.rgb(196, 30, 58)
+        "SHAMAN" -> Color.rgb(0, 112, 221); "MAGE" -> Color.rgb(63, 199, 235); "WARLOCK" -> Color.rgb(135, 136, 238)
+        "MONK" -> Color.rgb(0, 255, 152); "DRUID" -> Color.rgb(255, 124, 10); "DEMONHUNTER" -> Color.rgb(163, 48, 201)
+        "EVOKER" -> Color.rgb(51, 147, 127)
+        else -> TEXT
     }
 
     /** The zone drawn from the addon's places, with the path walked and an arrow for you. */
@@ -354,8 +437,6 @@ class MainActivity : Activity() {
         row.addView(zoom)
         content.addView(row)
         content.addView(view, LinearLayout.LayoutParams(-1, maxOf(dp(240), scroll.height - dp(90))))
-        content.addView(line("Tap a marker for its name. ! pick up a quest, yellow circle: do a quest there, ? turn in, F flight master, D dungeon, ★ rare, ● group. " +
-            "The yellow line is where you walked. Get zone picture shows the zone's map in the game for 3 seconds and keeps a picture of it here.", DIM, 12f))
         val note = line("", DIM, 12f)
         content.addView(note)
         pictureLine = note
@@ -378,6 +459,7 @@ class MainActivity : Activity() {
         mapTitle?.text = (map?.zone?.ifEmpty { null } ?: "Map ${s?.mapId ?: "unknown"}") + where +
             (if (s?.mapId != null && view.picture == null) "  (no picture yet)" else "")
         pictureLine?.text = pictureNote
+        pictureLine?.visibility = if (pictureNote.isEmpty()) View.GONE else View.VISIBLE
         view.invalidate()
     }
 
@@ -560,6 +642,8 @@ class MainActivity : Activity() {
 
     private companion object {
         /** Must match ns.TestKeys in addon/ThorCompanion/KeyTest.lua. */
+        /** The paper doll's slots, left column then right, as Character.lua sends them. */
+        val GEAR_SLOTS = listOf(1, 2, 3, 15, 5, 4, 19, 9, 10, 6, 7, 8, 11, 12, 13, 14, 16, 17)
         val TEST_KEYS = listOf("CTRL", "ALT").flatMap { mod -> (1..12).map { "$mod-F$it" } } - "ALT-F4" +
             listOf("F9", "SHIFT-F9", "CTRL-SHIFT-F9", "NUMPAD5")
         val BG = Color.rgb(16, 18, 22)

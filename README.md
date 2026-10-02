@@ -14,7 +14,8 @@ later on will be one key press per tap.
    grey cells in the top-right corner of the game screen. It carries the data: name,
    level, gold, map position, bag slots and bag contents, the names of the items
    in your bags, new chat lines, and the places on the zone map (quests, flight masters,
-   dungeons, rares, your map pin, group members). It only changes when the data does; a longer message (the bags) is
+   dungeons, rares, your map pin, group members), and your character sheet (class,
+   experience, item level, stats, the gear you wear with its durability). It only changes when the data does; a longer message (the bags) is
    split into parts that are shown in turn.
 2. The **app** (`app/`) runs on the bottom screen. It captures the top screen a
    few times a second, reads the square and draws the panels.

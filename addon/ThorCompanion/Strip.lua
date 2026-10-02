@@ -145,25 +145,6 @@ function ns.StripInfo()
         tostring(l), tostring(b), tostring(fw), tostring(fh), cell, shadeStep, right, top)
 end
 
--- Some world maps hide the whole interface (UIParent) while open, and the square
--- with it; then the square moves onto the map, so the app keeps getting data.
-function ns.HostFrame()
-    local wm = WorldMapFrame
-    if wm and wm:IsShown() and not UIParent:IsShown() then return wm end
-    return UIParent
-end
-
-function ns.StripFollowMap()
-    if not cells then return end
-    local host = ns.HostFrame()
-    if frame:GetParent() ~= host then
-        frame:SetParent(host)
-        frame:SetFrameStrata("TOOLTIP")
-        frame:SetFrameLevel(9000)
-        place()
-    end
-end
-
 -- The square's frame (for Map.lua, which measures the world map from it).
 function ns.StripFrame()
     if not cells then build() end

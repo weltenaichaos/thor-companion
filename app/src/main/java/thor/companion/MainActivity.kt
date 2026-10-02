@@ -18,6 +18,7 @@ import thor.companion.strip.GameState
 import thor.companion.strip.ChatLine
 import thor.companion.strip.ChatLog
 import thor.companion.strip.ItemNames
+import thor.companion.strip.MapPicture
 import thor.companion.strip.PartAssembler
 import thor.companion.strip.StripDecoder
 import thor.companion.strip.Trail
@@ -145,6 +146,7 @@ class MainActivity : Activity() {
                     message == null -> {}
                     message.startsWith("TH1|") -> runOnUiThread { onChat(message) }
                     message.startsWith("TM1|") -> ZoneMap.parse(message)?.let { runOnUiThread { onMap(it) } }
+                    message.startsWith("TW1|") -> MapPicture.parse(message)?.let { takeMapPicture(it, message) }
                     message.startsWith("TK1|") -> {
                         val keys = message.substring(4).split(',').filter { it.isNotEmpty() }.toSet()
                         runOnUiThread { onKeys(keys) }
@@ -191,6 +193,38 @@ class MainActivity : Activity() {
         }
         // Walking only moves the arrow; the rest of the tab stays as it is.
         if (panel == Panel.MAP && moved && mapView != null) updateMap() else if (panel != Panel.KEYS) render()
+    }
+
+    private fun mapFile(id: Int) = java.io.File(java.io.File(filesDir, "maps").apply { mkdirs() }, "$id.png")
+
+    /**
+     * The world map is open in the game: one full screenshot, the map cut out of it and
+     * kept as that zone's background. Only when the same screenshot still shows the
+     * addon saying so, so a map closed in between is not taken. Runs on the reader thread.
+     */
+    private fun takeMapPicture(pic: MapPicture, message: String) {
+        val px = screen.capture(rows = 4000) ?: return
+        val frame = (StripDecoder.decode(px) as? StripDecoder.Result.Ok)?.frame ?: return
+        if (!frame.crcOk || String(frame.payload) != message) return
+        val r = pic.onScreen(frame)
+        val l = r[0].coerceIn(0, px.width); val t = r[1].coerceIn(0, px.height)
+        val w = r[2].coerceIn(0, px.width) - l; val h = r[3].coerceIn(0, px.height) - t
+        if (w < 50 || h < 50) return
+        val pixels = IntArray(w * h) { i -> px.rgb(l + i % w, t + i / w) or (0xFF shl 24) }
+        val bitmap = android.graphics.Bitmap.createBitmap(pixels, w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        runCatching { mapFile(pic.mapId).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
+        runOnUiThread {
+            pictures.remove(pic.mapId)
+            status.text = "Took a picture of the map for the Map tab"
+            if (panel == Panel.MAP) updateMap()
+        }
+    }
+
+    /** Zone pictures loaded so far (null: there is none yet). */
+    private val pictures = HashMap<Int, android.graphics.Bitmap?>()
+
+    private fun picture(id: Int): android.graphics.Bitmap? = pictures.getOrPut(id) {
+        mapFile(id).takeIf { it.exists() }?.let { android.graphics.BitmapFactory.decodeFile(it.absolutePath) }
     }
 
     private fun onMap(map: ZoneMap) {
@@ -291,7 +325,8 @@ class MainActivity : Activity() {
         row.addView(zoom)
         content.addView(row)
         content.addView(view, LinearLayout.LayoutParams(-1, maxOf(dp(240), scroll.height - dp(90))))
-        content.addView(line("Tap a marker for its name. ! quest, ? turn in, F flight master, D dungeon, ★ rare, ● group. The yellow line is where you walked.", DIM, 12f))
+        content.addView(line("Tap a marker for its name. ! pick up a quest, yellow circle: do a quest there, ? turn in, F flight master, D dungeon, ★ rare, ● group. " +
+            "The yellow line is where you walked. Open the world map in the game (zoomed out, standing still) once per zone to get its picture here.", DIM, 12f))
         mapView = view
         mapTitle = title
         updateMap()
@@ -306,6 +341,7 @@ class MainActivity : Activity() {
         view.y = s?.y?.takeIf { it > 0 }
         view.facing = s?.facing
         view.trail = s?.mapId?.let { trail.paths[it] }.orEmpty()
+        view.picture = s?.mapId?.let { picture(it) }
         val where = if (s?.x != null && s.y != null && s.x!! > 0) String.format(Locale.US, "  %.1f, %.1f", s.x!! * 100, s.y!! * 100) else ""
         mapTitle?.text = (map?.zone?.ifEmpty { null } ?: "Map ${s?.mapId ?: "unknown"}") + where
         view.invalidate()

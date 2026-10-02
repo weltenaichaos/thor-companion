@@ -167,6 +167,10 @@ f:SetScript("OnEvent", function()
         if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
         local test = ns.KeyTestPayload and ns.KeyTestPayload()
         if test then ns.StripWrite(test) lastSent = {} return end
+        -- The world map is open: say where, so the app can take a picture of the zone.
+        local okPicture, picture = pcall(ns.MapPicturePayload)
+        if not okPicture then picture = nil end
+        if picture then ns.StripWrite(picture) lastSent = {} return end
         if ns.StripBusy() then return end
         local p = nextMessage()
         if p then ns.StripWrite(p) end

@@ -19,6 +19,8 @@ import kotlin.math.hypot
  */
 class MapView(context: Context) : View(context) {
     var zone: ZoneMap? = null
+    /** The zone's picture, taken from the game's world map; null draws a grid. */
+    var picture: android.graphics.Bitmap? = null
     var trail: List<List<DoubleArray>> = emptyList()
     var x: Double? = null
     var y: Double? = null
@@ -38,6 +40,11 @@ class MapView(context: Context) : View(context) {
     private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; style = Paint.Style.STROKE; strokeWidth = 1.5f * d }
     private val glyph = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 11 * d; textAlign = Paint.Align.CENTER; isFakeBoldText = true }
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(220, 224, 230); textSize = 11 * d; setShadowLayer(2 * d, 0f, 0f, Color.BLACK) }
+    private val photo = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val shade = Paint().apply { color = Color.argb(70, 0, 0, 0) }
+    private val area = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(70, 255, 210, 0) }
+    private val areaEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(255, 210, 0); style = Paint.Style.STROKE; strokeWidth = 2 * d }
+    private val areaText = Paint(text).apply { textAlign = Paint.Align.CENTER; color = Color.rgb(255, 230, 120) }
     private val me = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
 
     // The part of the map shown (0..1 map units) and where it lands on screen.
@@ -69,11 +76,25 @@ class MapView(context: Context) : View(context) {
         canvas.save()
         canvas.clipRect(ox, oy, ox + w, oy + h)
         canvas.drawColor(Color.rgb(22, 26, 32))
-        val stepGrid = if (close) 0.02 else 0.1
-        var g = Math.floor(left / stepGrid) * stepGrid
-        while (g <= left + span) { canvas.drawLine(sx(g), oy, sx(g), oy + h, grid); g += stepGrid }
-        g = Math.floor(top / stepGrid) * stepGrid
-        while (g <= top + span) { canvas.drawLine(ox, sy(g), ox + w, sy(g), grid); g += stepGrid }
+        val pic = picture
+        if (pic != null) {
+            canvas.drawBitmap(pic, null, android.graphics.RectF(sx(0.0), sy(0.0), sx(1.0), sy(1.0)), photo)
+            canvas.drawRect(ox, oy, ox + w, oy + h, shade)
+        } else {
+            val stepGrid = if (close) 0.02 else 0.1
+            var g = Math.floor(left / stepGrid) * stepGrid
+            while (g <= left + span) { canvas.drawLine(sx(g), oy, sx(g), oy + h, grid); g += stepGrid }
+            g = Math.floor(top / stepGrid) * stepGrid
+            while (g <= top + span) { canvas.drawLine(ox, sy(g), ox + w, sy(g), grid); g += stepGrid }
+        }
+
+        // Quest objectives are areas, not spots: a soft circle where to do them.
+        for (place in zone?.places.orEmpty()) {
+            if (place.kind != 'q') continue
+            val radius = (0.035 / span * w).toFloat()
+            canvas.drawCircle(sx(place.x), sy(place.y), radius, area)
+            canvas.drawCircle(sx(place.x), sy(place.y), radius, areaEdge)
+        }
 
         for (piece in trail) {
             if (piece.size < 2) continue
@@ -83,9 +104,14 @@ class MapView(context: Context) : View(context) {
             canvas.drawPath(p, path)
         }
 
-        val r = 8 * d
         for (place in zone?.places.orEmpty()) {
             val cx = sx(place.x); val cy = sy(place.y)
+            if (place.kind == 'q') {
+                canvas.drawText(short(place.label), cx, cy + 4 * d, areaText)
+                continue
+            }
+            // Where to pick up and turn in quests stands out most.
+            val r = if (place.kind == 'a' || place.kind == 'Q') 11 * d else 8 * d
             dot.color = colour(place.kind)
             canvas.drawCircle(cx, cy, r, dot)
             canvas.drawCircle(cx, cy, r, ring)
@@ -130,11 +156,12 @@ class MapView(context: Context) : View(context) {
 
     companion object {
         fun symbol(kind: Char) = when (kind) {
-            'q' -> "!"; 'Q' -> "?"; 'w' -> "•"; 'c' -> "✝"; 'f' -> "F"; 'd' -> "D"; 'p' -> "◆"; 'v' -> "★"; 'g' -> "●"
+            'a' -> "!"; 'q' -> ""; 'Q' -> "?"; 'w' -> "•"; 'c' -> "✝"; 'f' -> "F"; 'd' -> "D"; 'p' -> "◆"; 'v' -> "★"; 'g' -> "●"
             else -> ""
         }
 
         fun colour(kind: Char) = when (kind) {
+            'a' -> Color.rgb(255, 210, 0)
             'q' -> Color.rgb(255, 210, 0)
             'Q' -> Color.rgb(255, 240, 120)
             'w' -> Color.rgb(90, 200, 255)
@@ -148,7 +175,7 @@ class MapView(context: Context) : View(context) {
         }
 
         fun kindName(kind: Char) = when (kind) {
-            'q' -> "Quest"; 'Q' -> "Quest ready to turn in"; 'w' -> "Map pin"; 'c' -> "Corpse"
+            'a' -> "Pick up a quest"; 'q' -> "Do this quest here"; 'Q' -> "Turn in a quest"; 'w' -> "Map pin"; 'c' -> "Corpse"
             'f' -> "Flight master"; 'd' -> "Dungeon"; 'p' -> "Place"; 'v' -> "Rare or treasure"; 'g' -> "Group member"
             else -> "Place"
         }

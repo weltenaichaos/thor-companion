@@ -52,3 +52,16 @@ class ZoneMapTest {
         assertEquals(listOf(0.3, 0.4, 0.5), t.paths[1]!!.single().map { it[0] })
     }
 }
+
+class MapPictureTest {
+    @Test
+    fun placesTheMapRelativeToTheSquare() {
+        val pic = MapPicture.parse("TW1|1420|-1126|292|469|312|3")!!
+        assertEquals(MapPicture(1420, -1126, 292, 469, 312, 3), pic)
+        // Square found at x 1830, sync row middle 35.25 with 4.5 px cells: game pixels are 1.5 screen pixels.
+        val frame = StripFrame(4, 1, 0, 1, true, ByteArray(0), 30.0, 4.5, 35, x = 1830.0)
+        val r = pic.onScreen(frame)
+        assertEquals(listOf(1830 - 1689, 33 + 438, 1830 - 1689 + 704, 33 + 438 + 468), r.toList())
+        assertNull(MapPicture.parse("TW1|1|2|3"))
+    }
+}

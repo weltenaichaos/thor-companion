@@ -145,6 +145,12 @@ function ns.StripInfo()
         tostring(l), tostring(b), tostring(fw), tostring(fh), cell, shadeStep, right, top)
 end
 
+-- The square's frame (for Map.lua, which measures the world map from it).
+function ns.StripFrame()
+    if not cells then build() end
+    return frame
+end
+
 -- Largest message in bytes (split over up to MAX_PARTS parts).
 function ns.StripCapacity()
     return PART_BYTES * MAX_PARTS

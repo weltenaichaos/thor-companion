@@ -3,12 +3,16 @@
 -- and the places on it. Sent as
 --   TM1|mapID|zone|parent zone<newline><kind>,<x>,<y>,<label><newline>...
 -- with x and y from 0 to 1 on the zone map, like the position. Kinds:
---   q quest objective area   Q quest ready to turn in   w your map pin
+--   q quest objective area   Q quest ready to turn in   a quest to pick up
+--   w your map pin
 --   c your corpse            f flight master            d dungeon or raid entrance
 --   p other place on the map (towns, events)            v rare or treasure
 --   g group member
--- The app cannot show the game's map picture, so it draws these on a plain
--- background together with the path you walked.
+-- The app draws these together with the path you walked, over a picture of the
+-- zone it took itself: when you open the world map (zoomed out, standing still),
+--   TW1|mapID|left|top|width|height|cell
+-- says where the map is on screen, in game pixels from the top-left corner of the
+-- data square, so the app can cut the map out of one screenshot and keep it.
 
 local _, ns = ...
 
@@ -59,6 +63,12 @@ local function places(mapID)
         end
     end)
     each(entries, function(add)
+        C_QuestLine.RequestQuestLinesForMap(mapID)
+        for _, q in ipairs(C_QuestLine.GetAvailableQuestLines(mapID) or {}) do
+            if not q.isHidden then add("a", q, q.questName) end
+        end
+    end)
+    each(entries, function(add)
         for i = 1, GetNumGroupMembers() > 0 and 4 or 0 do
             local unit = "party" .. i
             if UnitExists(unit) then add("g", C_Map.GetPlayerMapPosition(mapID, unit), UnitName(unit)) end
@@ -100,4 +110,40 @@ function ns.MapPayload()
         used = used + #e + 1
     end
     return head .. "\n" .. table.concat(out, "\n")
+end
+
+-- The zone picture: each zoomed-out world map is offered once per session, for
+-- PICTURE_SECONDS, after it has been still for a moment (the app takes it then).
+local PICTURE_SECONDS = 3
+local offered = {}
+local stillSince, stillMap, offerUntil, offerMap = 0, nil, 0, nil
+
+local function physical(frame)
+    local l, b, w, h = frame:GetRect()
+    if not l then return end
+    local k = frame:GetEffectiveScale() * select(2, GetPhysicalScreenSize()) / 768
+    return l * k, (b + h) * k, w * k, h * k
+end
+
+function ns.MapPicturePayload()
+    local wm = WorldMapFrame
+    local now = GetTime()
+    local ok, mapID = pcall(function()
+        local scroll = wm and wm:IsVisible() and wm.ScrollContainer
+        if not scroll or scroll.IsZoomedOut and not scroll:IsZoomedOut() then return end
+        if wm:GetAlpha() < 0.99 or IsPlayerMoving() then return end
+        return wm:GetMapID()
+    end)
+    if not ok or not mapID then stillMap = nil return nil end
+    if mapID ~= stillMap then stillMap, stillSince = mapID, now end
+    if offerMap ~= mapID or now > offerUntil then
+        if offered[mapID] or now - stillSince < 1 then return nil end
+        offered[mapID] = true
+        offerMap, offerUntil = mapID, now + PICTURE_SECONDS
+    end
+    local sl, st = physical(ns.StripFrame())
+    local cl, ct, cw, ch = physical(WorldMapFrame.ScrollContainer.Child)
+    if not sl or not cl then return nil end
+    local r = function(v) return math.floor(v + 0.5) end
+    return string.format("TW1|%d|%d|%d|%d|%d|%d", mapID, r(cl - sl), r(st - ct), r(cw), r(ch), (ThorCompanionDB and ThorCompanionDB.cell) or 3)
 end

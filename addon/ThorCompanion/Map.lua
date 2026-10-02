@@ -202,15 +202,20 @@ local function drawArt(mapID)
     return n > 0
 end
 
+local note = "the world map has not been open yet"
+
 function ns.MapPicturePayload()
     local wm = WorldMapFrame
     local now = GetTime()
     local ok, mapID = pcall(function()
-        local scroll = wm and wm:IsVisible() and wm.ScrollContainer
-        if not scroll or scroll.IsZoomedOut and not scroll:IsZoomedOut() then return end
-        if wm:GetAlpha() < 0.99 or IsPlayerMoving() then return end
+        if not (wm and wm:IsVisible()) then note = "world map closed" return end
+        local scroll = wm.ScrollContainer
+        if scroll.IsZoomedOut and not scroll:IsZoomedOut() then note = "world map zoomed in" return end
+        if wm:GetAlpha() < 0.99 then note = "world map faded" return end
+        if IsPlayerMoving() then note = "moving" return end
         return wm:GetMapID()
     end)
+    if not ok then note = "error: " .. tostring(mapID) end
     if not ok or not mapID then
         stillMap = nil
         if art then art:Hide() end
@@ -220,11 +225,13 @@ function ns.MapPicturePayload()
     if offerMap ~= mapID or now > offerUntil then
         if art then art:Hide() end
         local explored = #(C_MapExplorationInfo.GetExploredMapTextures(mapID) or {})
-        if offered[mapID] == explored or now - stillSince < 1 then return nil end
+        if offered[mapID] == explored then note = "picture of map " .. mapID .. " already taken" return nil end
+        if now - stillSince < 1 then return nil end
         offered[mapID] = explored
         offerMap, offerUntil = mapID, now + PICTURE_SECONDS
         local drawn, okArt = pcall(drawArt, mapID)
         if not drawn or not okArt then
+            note = "could not draw map " .. mapID .. ": " .. tostring(okArt)
             if art then art:Hide() end
             offerUntil = 0
             return nil
@@ -232,7 +239,14 @@ function ns.MapPicturePayload()
     end
     local sl, st = physical(ns.StripFrame())
     local cl, ct, cw, ch = physical(art)
-    if not sl or not cl then return nil end
+    if not sl or not cl then note = "map not placed yet" return nil end
     local r = function(v) return math.floor(v + 0.5) end
+    note = "showing map " .. mapID .. " for the app"
     return string.format("TW1|%d|%d|%d|%d|%d|%d", mapID, r(cl - sl), r(st - ct), r(cw), r(ch), (ThorCompanionDB and ThorCompanionDB.cell) or 3)
+end
+
+-- For /thor map: what the map picture is doing, and the places message.
+function ns.MapInfo()
+    local ok, p = pcall(ns.MapPayload)
+    return "zone picture: " .. note .. "\n" .. (ok and (p or "no map here") or ("error: " .. tostring(p)))
 end

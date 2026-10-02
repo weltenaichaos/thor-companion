@@ -47,6 +47,8 @@ when the game starts. In game:
   lightest is 3 × N out of 255). Lower is darker and harder for the app to read.
 - `/thor shape line` draws the same cells as one thin line along the top edge instead;
   `/thor shape square` goes back.
+- `/thor map` prints what the zone picture is doing (for example "world map zoomed in") and the
+  places sent for the Map tab.
 - `/thor hide` and `/thor show` turn the square off and on.
 - `/thor chat channels on` adds public channels (General, Trade, ...) to the app's Chat tab;
   `off` (the default) leaves them out. Say, yell, emotes, whispers, party, raid, instance,

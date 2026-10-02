@@ -15,6 +15,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 import thor.companion.strip.ActionKeys
 import thor.companion.strip.GameState
+import thor.companion.strip.ChatLine
+import thor.companion.strip.ChatLog
 import thor.companion.strip.ItemNames
 import thor.companion.strip.PartAssembler
 import thor.companion.strip.StripDecoder
@@ -35,6 +37,8 @@ class MainActivity : Activity() {
     private val tabs = HashMap<Panel, Button>()
     private var panel = Panel.BAGS
     private var state: GameState? = null
+    private val chat = ChatLog()
+    private lateinit var scroll: ScrollView
     private var gotKeys: Set<String> = emptySet()
     private var keyResult = ""
 
@@ -78,7 +82,8 @@ class MainActivity : Activity() {
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(header)
         root.addView(status)
-        root.addView(ScrollView(this).apply { addView(content) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        scroll = ScrollView(this).apply { addView(content) }
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
         show(Panel.BAGS)
         status.text = "Looking for the game…"
@@ -121,6 +126,7 @@ class MainActivity : Activity() {
                 val page = message?.let { ItemNames.parse(it) }
                 when {
                     message == null -> {}
+                    message.startsWith("TH1|") -> runOnUiThread { onChat(message) }
                     message.startsWith("TK1|") -> {
                         val keys = message.substring(4).split(',').filter { it.isNotEmpty() }.toSet()
                         runOnUiThread { onKeys(keys) }
@@ -161,6 +167,11 @@ class MainActivity : Activity() {
         if (parsed == null || parsed == state) return
         state = parsed
         if (panel != Panel.KEYS) render()
+    }
+
+    private fun onChat(message: String) {
+        status.text = "Connected"
+        if (chat.add(message) == true && panel == Panel.CHAT) render()
     }
 
     private fun onKeys(keys: Set<String>) {
@@ -223,9 +234,43 @@ class MainActivity : Activity() {
                 }
                 content.addView(line("The map picture comes in a later version.", DIM))
             }
-            Panel.CHAT -> content.addView(line("Chat comes in a later version.", DIM))
+            Panel.CHAT -> renderChat()
             Panel.KEYS -> {}
         }
+    }
+
+    /** The chat lines, newest at the bottom, coloured like WoW's chat frame. */
+    private fun renderChat() {
+        if (chat.lines.isEmpty()) {
+            content.addView(line("No chat yet. New lines in say, whispers, party, raid, guild and system messages show up here.", DIM))
+            return
+        }
+        for (l in chat.lines.takeLast(100)) content.addView(chatLine(l))
+        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    private fun chatLine(l: ChatLine): TextView {
+        val who = when {
+            l.sender.isEmpty() -> ""
+            l.kind == "whisper" -> "${l.sender} whispers: "
+            l.kind == "whisper_to" -> "To ${l.sender}: "
+            l.kind == "emote" -> "${l.sender} "
+            l.kind == "yell" -> "${l.sender} yells: "
+            else -> "${l.sender}: "
+        }
+        val colour = when (l.kind) {
+            "whisper", "whisper_to" -> Color.rgb(255, 128, 255)
+            "party" -> Color.rgb(170, 170, 255)
+            "raid" -> Color.rgb(255, 127, 0)
+            "instance" -> Color.rgb(255, 127, 0)
+            "guild" -> Color.rgb(64, 255, 64)
+            "yell" -> Color.rgb(255, 64, 64)
+            "emote" -> Color.rgb(255, 128, 64)
+            "system" -> Color.rgb(255, 255, 0)
+            "channel" -> Color.rgb(255, 192, 192)
+            else -> TEXT
+        }
+        return line(who + l.text, colour, 15f).apply { setPadding(0, dp(2), 0, dp(2)) }
     }
 
     /** Key test: each button sends one key to the game's screen; `/thor keytest` in game prints what arrives. */

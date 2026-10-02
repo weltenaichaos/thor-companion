@@ -12,8 +12,8 @@ later on will be one key press per tap.
 
 1. The **ThorCompanion addon** (`addon/ThorCompanion`) draws a small square of dark
    grey cells in the top-right corner of the game screen. It carries the data: name,
-   level, gold, map position, bag slots and bag contents, and the names of the items
-   in your bags. It only changes when the data does; a longer message (the bags) is
+   level, gold, map position, bag slots and bag contents, the names of the items
+   in your bags, and new chat lines. It only changes when the data does; a longer message (the bags) is
    split into parts that are shown in turn.
 2. The **app** (`app/`) runs on the bottom screen. It captures the top screen a
    few times a second, reads the square and draws the panels.
@@ -41,6 +41,10 @@ when the game starts. In game:
 - `/thor shape line` draws the same cells as one thin line along the top edge instead;
   `/thor shape square` goes back.
 - `/thor hide` and `/thor show` turn the square off and on.
+- `/thor chat channels on` adds public channels (General, Trade, ...) to the app's Chat tab;
+  `off` (the default) leaves them out. Say, yell, emotes, whispers, party, raid, instance,
+  guild and system lines are always sent. During boss fights the game hides chat from
+  addons, so those lines show as hidden.
 - `/thor taps off` and `/thor taps on` turn tap-to-use off and on (default on). With it on,
   every bag slot has its own key (CTRL-F1 and up), bound out of combat, and tapping an
   item in the app's Bags tab presses that one key, which uses the item.

@@ -1,10 +1,11 @@
 -- Data.lua
 -- Collects non-secret, out-of-combat-safe state and hands it to the strip.
--- Three kinds of message, checked every half second, each sent only when it changed:
+-- Four kinds of message, checked every half second, each sent only when it changed:
 --   TS1|name|level|copper|mapID|x|y                         (small, changes while walking)
 --   TB1|free/total|itemID:count:key,itemID:count:key,...    (the bags)
 --   (key: the slot's tap key, an index into ns.ActionKeys; left out when unbound)
 --   TN1|itemID,quality,name<newline>itemID,quality,name...   (names of bag items, a page at a time)
+--   TH1|...                                                   (new chat lines, see Chat.lua)
 -- The app keeps the names it has seen. State and bags are sent again every five
 -- minutes and names every half hour, for an app that started after the game.
 
@@ -101,8 +102,15 @@ local function namesPayload(peek)
     return "TN1|" .. table.concat(parts, "\n")
 end
 
+local chatAgain = false
+local function chat()
+    local p = ns.ChatPayload(chatAgain)
+    chatAgain = false
+    return p
+end
+
 -- The kinds take turns; one that has not changed since it was last sent is skipped.
-local kinds = { status, bags, namesPayload }
+local kinds = { status, bags, namesPayload, chat }
 local lastSent = {}
 local turn = 0
 local statusAt = 0
@@ -139,7 +147,7 @@ f:SetScript("OnEvent", function()
     ns.StripShow(ThorCompanionDB.hidden ~= true)
     ticker = C_Timer.NewTicker(0.5, function()
         ticks = ticks + 1
-        if ticks % REFRESH_TICKS == 0 then lastSent = {} end
+        if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain = {}, true end
         if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
         local test = ns.KeyTestPayload and ns.KeyTestPayload()
         if test then ns.StripWrite(test) lastSent = {} return end
@@ -176,6 +184,9 @@ SlashCmdList.THORCOMPANION = function(msg)
         setting("cell", cell, 2, 8, "the cell size")
     elseif shadeStep then
         setting("shade", shadeStep, 4, 80, "the shade step")
+    elseif msg == "chat channels on" or msg == "chat channels off" then
+        ns.ChatChannels(msg == "chat channels on")
+        print("|cff66ccffThor Companion|r public channels in the app's chat " .. (msg:sub(-2) == "on" and "on" or "off"))
     elseif msg == "info" then
         print("|cff66ccffThor Companion|r " .. ns.StripInfo())
     elseif msg == "taps" then

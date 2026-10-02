@@ -24,7 +24,7 @@ import java.util.Locale
  */
 class MainActivity : Activity() {
 
-    private enum class Panel(val title: String) { BAGS("Bags"), CHARACTER("Character"), MAP("Map"), CHAT("Chat") }
+    private enum class Panel(val title: String) { BAGS("Bags"), CHARACTER("Character"), MAP("Map"), CHAT("Chat"), KEYS("Keys") }
 
     private lateinit var screen: TopScreen
     private lateinit var names: NameStore
@@ -34,11 +34,15 @@ class MainActivity : Activity() {
     private var panel = Panel.BAGS
     private var state: GameState? = null
     private var lastSeq = -1
+    private var gotKeys: Set<String> = emptySet()
+    private var keyResult = ""
 
     @Volatile private var worker: Thread? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Taps here must not take the key focus (or the controller) away from the game.
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
         screen = TopScreen(this)
         names = NameStore(this)
         screen.displayId = getPreferences(MODE_PRIVATE).getString("display", null)
@@ -53,7 +57,7 @@ class MainActivity : Activity() {
             val b = Button(this).apply {
                 text = p.title
                 isAllCaps = false
-                textSize = 16f
+                textSize = 15f
                 setOnClickListener { show(p) }
             }
             tabs[p] = b
@@ -101,7 +105,10 @@ class MainActivity : Activity() {
             if (frame != null) {
                 misses = 0
                 val page = ItemNames.parse(frame.payload)
-                if (page != null) {
+                if (frame.payload.startsWith("TK1|")) {
+                    val keys = frame.payload.substring(4).split(',').filter { it.isNotEmpty() }.toSet()
+                    runOnUiThread { onKeys(keys) }
+                } else if (page != null) {
                     val changed = names.addAll(page)
                     runOnUiThread { onNames(changed) }
                 } else {
@@ -127,7 +134,14 @@ class MainActivity : Activity() {
         if (seq == lastSeq && parsed == state) return
         lastSeq = seq
         state = parsed
-        render()
+        if (panel != Panel.KEYS) render()
+    }
+
+    private fun onKeys(keys: Set<String>) {
+        status.text = "Connected, key test running"
+        if (keys == gotKeys) return
+        gotKeys = keys
+        if (panel == Panel.KEYS) render()
     }
 
     private fun onNames(changed: Boolean) {
@@ -160,6 +174,10 @@ class MainActivity : Activity() {
 
     private fun render() {
         content.removeAllViews()
+        if (panel == Panel.KEYS) {
+            renderKeys()
+            return
+        }
         val s = state
         if (s == null) {
             content.addView(line("Waiting for the game…", DIM))
@@ -180,7 +198,50 @@ class MainActivity : Activity() {
                 content.addView(line("The map picture comes in a later version.", DIM))
             }
             Panel.CHAT -> content.addView(line("Chat comes in a later version.", DIM))
+            Panel.KEYS -> {}
         }
+    }
+
+    /** Key test: each button sends one key to the game's screen; `/thor keytest` in game prints what arrives. */
+    private fun renderKeys() {
+        content.addView(line("Type /thor keytest in the game, then tap each key once. Keys the game reports back turn green.", DIM))
+        val result = line(keyResult, TEXT)
+        val grid = GridLayout(this).apply { columnCount = 4 }
+        for (key in TEST_KEYS) {
+            val got = key in gotKeys
+            val b = Button(this).apply {
+                text = if (got) "✓ $key" else key
+                isAllCaps = false
+                setTextColor(if (got) Color.BLACK else TEXT)
+                background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(if (got) GOT else CARD) }
+                setOnClickListener {
+                    val target = gameDisplay()
+                    Thread {
+                        val err = KeySender.send(this@MainActivity, target, key)
+                        runOnUiThread {
+                            keyResult = if (err == null) "Sent $key to screen $target" else "$key: $err"
+                            result.text = keyResult
+                        }
+                    }.start()
+                }
+            }
+            grid.addView(b, GridLayout.LayoutParams().apply {
+                width = 0
+                height = dp(56)
+                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                rowSpec = GridLayout.spec(GridLayout.UNDEFINED, GridLayout.FILL)
+                setMargins(dp(3), dp(3), dp(3), dp(3))
+            })
+        }
+        content.addView(grid)
+        content.addView(result)
+    }
+
+    /** The other screen: the one this app is not on. */
+    private fun gameDisplay(): Int {
+        val here = display?.displayId ?: 0
+        val dm = getSystemService(android.hardware.display.DisplayManager::class.java)
+        return dm.displays.map { it.displayId }.firstOrNull { it != here } ?: 0
     }
 
     private fun renderBags(s: GameState) {
@@ -244,11 +305,15 @@ class MainActivity : Activity() {
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     private companion object {
+        /** Must match ns.TestKeys in addon/ThorCompanion/KeyTest.lua. */
+        val TEST_KEYS = listOf("CTRL", "ALT").flatMap { mod -> (1..12).map { "$mod-F$it" } } - "ALT-F4" +
+            listOf("F9", "SHIFT-F9", "CTRL-SHIFT-F9", "NUMPAD5")
         val BG = Color.rgb(16, 18, 22)
         val CARD = Color.rgb(36, 40, 48)
         val TEXT = Color.rgb(230, 232, 236)
         val DIM = Color.rgb(140, 146, 156)
         val ACCENT = Color.rgb(255, 196, 64)
+        val GOT = Color.rgb(90, 210, 120)
         val GOLD = Color.rgb(255, 210, 90)
     }
 }

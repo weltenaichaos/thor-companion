@@ -15,6 +15,9 @@ object ActionKeys {
     /** The key that opens a whisper to whoever has whisper slot [slot] (1..10) in the addon. */
     fun forWhisper(slot: Int): String? = "ALT-SHIFT-F$slot".takeIf { slot in 1..10 }
 
+    /** The key that makes the addon show the zone's map art for the app to take (Map.lua). */
+    const val PICTURE = "ALT-SHIFT-F11"
+
     /** The key for the addon's 1-based [index], or null. */
     fun forIndex(index: Int): String? = all.getOrNull(index - 1)
 }

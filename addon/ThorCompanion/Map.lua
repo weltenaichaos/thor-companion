@@ -9,12 +9,13 @@
 --   p other place on the map (towns, events)            v rare or treasure
 --   g group member
 -- The app draws these together with the path you walked, over a picture of the
--- zone it took itself: when you open the world map (zoomed out, standing still),
--- the addon covers it for a few seconds with a clean copy (the same map art,
--- without quest icons, your arrow or other addons' marks), and
+-- zone it took itself: its "Get zone picture" button presses one key
+-- (ALT-SHIFT-F11), and the addon shows the zone's map art (the same art as the
+-- world map, without quest icons, arrows or other addons' marks) in the middle
+-- of the screen for a few seconds, while
 --   TW1|mapID|left|top|width|height|cell
--- says where that is on screen, in game pixels from the top-left corner of the
--- data square, so the app can cut it out of one screenshot and keep it.
+-- says where that is, in game pixels from the top-left corner of the data
+-- square, so the app can cut it out of one screenshot and keep it.
 
 local _, ns = ...
 
@@ -114,12 +115,10 @@ function ns.MapPayload()
     return head .. "\n" .. table.concat(out, "\n")
 end
 
--- The zone picture: each zoomed-out world map is offered for PICTURE_SECONDS,
--- after it has been still for a moment (the app takes it then): once per
--- session, and again whenever more of the zone has been explored since.
+-- The zone picture, shown for PICTURE_SECONDS after the key.
 local PICTURE_SECONDS = 3
-local offered = {}
-local stillSince, stillMap, offerUntil, offerMap = 0, nil, 0, nil
+local PICTURE_WIDTH = 960       -- game pixels
+local pictureUntil, pictureMap = 0, nil
 
 local function physical(frame)
     local l, b, w, h = frame:GetRect()
@@ -149,20 +148,20 @@ local function drawArt(mapID)
         art = CreateFrame("Frame", nil, UIParent)
         art:SetFrameStrata("FULLSCREEN_DIALOG")
         art:SetClipsChildren(true)
+        -- Like the data square: 1 unit = 1 game pixel, whatever the UI scale.
+        art:SetIgnoreParentScale(true)
         local bg = art:CreateTexture(nil, "BACKGROUND")
         bg:SetAllPoints()
         bg:SetColorTexture(0, 0, 0, 1)
     end
-    if art:GetParent() ~= ns.HostFrame() then
-        art:SetParent(ns.HostFrame())
-        art:SetFrameStrata("FULLSCREEN_DIALOG")
-    end
     for _, t in ipairs(artTextures) do t:Hide() end
     local layer = (C_Map.GetMapArtLayers(mapID) or {})[1]
     if not layer then return false end
+    art:SetScale(768 / select(2, GetPhysicalScreenSize()))
+    art:SetSize(PICTURE_WIDTH, PICTURE_WIDTH * layer.layerHeight / layer.layerWidth)
     art:ClearAllPoints()
-    art:SetAllPoints(WorldMapFrame.ScrollContainer.Child)
-    local k = art:GetWidth() / layer.layerWidth
+    art:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    local k = PICTURE_WIDTH / layer.layerWidth
     local n = 0
     local cols = math.ceil(layer.layerWidth / layer.tileWidth)
     for i, file in ipairs(C_Map.GetMapArtLayerTextures(mapID, 1) or {}) do
@@ -206,59 +205,64 @@ local function drawArt(mapID)
     return n > 0
 end
 
-local note = "the world map has not been open yet"
-local lastOffer = "none yet"
+local note = "no picture asked for yet"
 
-function ns.MapPicturePayload()
-    local wm = WorldMapFrame
-    local now = GetTime()
-    local ok, mapID = pcall(function()
-        if not (wm and wm:IsVisible()) then note = "world map closed" return end
-        local scroll = wm.ScrollContainer
-        if scroll.IsZoomedOut and not scroll:IsZoomedOut() then note = "world map zoomed in" return end
-        if wm:GetAlpha() < 0.99 then note = "world map faded" return end
-        if IsPlayerMoving() then note = "moving" return end
-        return wm:GetMapID()
-    end)
-    if not ok then note = "error: " .. tostring(mapID) end
-    if not ok or not mapID then
-        stillMap = nil
+-- The key: show the art of the zone you are in.
+function ns.MapPictureShow()
+    local mapID = C_Map.GetBestMapForUnit("player")
+    if not mapID then note = "no map here" return end
+    local ok, drawn = pcall(drawArt, mapID)
+    if not ok or not drawn then
+        note = "could not draw map " .. mapID .. ": " .. tostring(drawn)
         if art then art:Hide() end
-        return nil
+        return
     end
-    if mapID ~= stillMap then stillMap, stillSince = mapID, now end
-    if offerMap ~= mapID or now > offerUntil then
-        if art then art:Hide() end
-        local explored = #(C_MapExplorationInfo.GetExploredMapTextures(mapID) or {})
-        if offered[mapID] == explored then note = "picture of map " .. mapID .. " already offered (/thor map again to offer it again)" return nil end
-        if now - stillSince < 1 then return nil end
-        offered[mapID] = explored
-        offerMap, offerUntil = mapID, now + PICTURE_SECONDS
-        local drawn, okArt = pcall(drawArt, mapID)
-        if not drawn or not okArt then
-            note = "could not draw map " .. mapID .. ": " .. tostring(okArt)
-            lastOffer = note
-            if art then art:Hide() end
-            offerUntil = 0
-            return nil
-        end
+    pictureMap, pictureUntil = mapID, GetTime() + PICTURE_SECONDS
+    note = "showed map " .. mapID .. " at " .. date("%H:%M:%S")
+end
+
+-- TW1 while the art is up, else nil (and the art goes away).
+function ns.MapPicturePayload()
+    if GetTime() > pictureUntil then
+        if art and art:IsShown() then art:Hide() end
+        return nil
     end
     local sl, st = physical(ns.StripFrame())
     local cl, ct, cw, ch = physical(art)
-    if not sl or not cl then note = "map not placed yet" return nil end
+    if not sl or not cl then return nil end
     local r = function(v) return math.floor(v + 0.5) end
-    note = "showing map " .. mapID .. " for the app"
-    lastOffer = string.format("map %d at %s, %dx%d game pixels", mapID, date("%H:%M:%S"), r(cw), r(ch))
-    return string.format("TW1|%d|%d|%d|%d|%d|%d", mapID, r(cl - sl), r(st - ct), r(cw), r(ch), (ThorCompanionDB and ThorCompanionDB.cell) or 3)
+    return string.format("TW1|%d|%d|%d|%d|%d|%d", pictureMap, r(cl - sl), r(st - ct), r(cw), r(ch), (ThorCompanionDB and ThorCompanionDB.cell) or 3)
 end
 
--- For /thor map: what the map picture is doing, and the places message.
+-- For /thor map: what the map picture did last, and the places message.
 function ns.MapInfo()
     local ok, p = pcall(ns.MapPayload)
-    return "zone picture: " .. note .. "\nlast offered: " .. lastOffer .. "\n" .. (ok and (p or "no map here") or ("error: " .. tostring(p)))
+    return "zone picture: " .. note .. "\n" .. (ok and (p or "no map here") or ("error: " .. tostring(p)))
 end
 
--- For /thor map again: offer every map's picture again.
-function ns.MapAgain()
-    offered = {}
+-- The picture key, bound out of combat like the bag keys (and off with /thor taps off).
+local keyOwner = CreateFrame("Frame")
+local keyButton = CreateFrame("Button", "ThorCompanionMapPicture", UIParent)
+keyButton:RegisterForClicks("AnyUp", "AnyDown")
+local lastClick = 0
+keyButton:SetScript("OnClick", function()
+    if GetTime() - lastClick < 0.5 then return end
+    lastClick = GetTime()
+    ns.MapPictureShow()
+end)
+local keyPending = false
+
+function ns.BindMapKey()
+    if InCombatLockdown() then keyPending = true return end
+    keyPending = false
+    ClearOverrideBindings(keyOwner)
+    if ns.TapsEnabled() then
+        SetOverrideBindingClick(keyOwner, true, ns.ActionKeys[ns.PictureKey], keyButton:GetName())
+    end
 end
+
+keyOwner:RegisterEvent("PLAYER_LOGIN")
+keyOwner:RegisterEvent("PLAYER_REGEN_ENABLED")
+keyOwner:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_LOGIN" or keyPending then ns.BindMapKey() end
+end)

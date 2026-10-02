@@ -24,12 +24,14 @@ do
     end
 end
 
--- ALT-SHIFT-F1..F10 open whispers (Chat.lua); bag slots get the other keys.
+-- ALT-SHIFT-F1..F10 open whispers (Chat.lua), ALT-SHIFT-F11 shows the zone
+-- picture (Map.lua); bag slots get the other keys.
 ns.WhisperKeys = {}
 local reserved = {}
 for i, key in ipairs(ns.ActionKeys) do
     local n = tonumber(key:match("^ALT%-SHIFT%-F(%d+)$"))
     if n and n <= 10 then ns.WhisperKeys[n] = i reserved[i] = true end
+    if n == 11 then ns.PictureKey = i reserved[i] = true end
 end
 
 local owner = CreateFrame("Frame")
@@ -107,6 +109,7 @@ function ns.SetTaps(on)
     ThorCompanionDB.taps = on
     ns.BindSlots()
     ns.BindWhispers()
+    ns.BindMapKey()
 end
 
 local sizes = ""

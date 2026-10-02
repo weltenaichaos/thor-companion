@@ -20,10 +20,9 @@ later on will be one key press per tap.
    few times a second, reads the square and draws the panels.
    The Map tab draws the zone from those places, with an arrow for you and a line where
    you walked; "Around me" zooms in. Its background is a picture of the zone the app
-   takes itself: open the world map in the game once per zone (zoomed out, standing
-   still). The addon covers it for a few seconds with a clean copy of the map art (no
-   quest icons, arrow or other addons' marks) and says where that is on screen, so the
-   app can cut it out of one screenshot. Until then the background is a grid.
+   takes itself: "Get zone picture" presses one key (ALT-SHIFT-F11), the addon shows the
+   zone's map art (no quest icons, arrows or other addons' marks) in the middle of the
+   screen for 3 seconds and says where, and the app cuts it out of one screenshot. Until then the background is a grid.
 3. The **decoder** (`decoder/`) is plain Kotlin that the app uses. It is tested
    against a square drawn by the addon, upscaled and colour-shifted like on the Thor.
 
@@ -47,8 +46,8 @@ when the game starts. In game:
   lightest is 3 × N out of 255). Lower is darker and harder for the app to read.
 - `/thor shape line` draws the same cells as one thin line along the top edge instead;
   `/thor shape square` goes back.
-- `/thor map` prints what the zone picture is doing (for example "world map zoomed in") and the
-  places sent for the Map tab.
+- `/thor map` prints what the zone picture did last and the places sent for the Map tab;
+  `/thor map picture` shows the zone picture like the app's button.
 - `/thor hide` and `/thor show` turn the square off and on.
 - `/thor chat channels on` adds public channels (General, Trade, ...) to the app's Chat tab;
   `off` (the default) leaves them out. Say, yell, emotes, whispers, party, raid, instance,

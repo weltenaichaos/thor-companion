@@ -107,7 +107,8 @@ class MapView(context: Context) : View(context) {
         for (place in zone?.places.orEmpty()) {
             val cx = sx(place.x); val cy = sy(place.y)
             if (place.kind == 'q') {
-                canvas.drawText(short(place.label), cx, cy + 4 * d, areaText)
+                // Many quests share an area; their names only fit when zoomed in (tap one otherwise).
+                if (close) canvas.drawText(short(place.label), cx, cy + 4 * d, areaText)
                 continue
             }
             // Where to pick up and turn in quests stands out most.

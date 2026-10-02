@@ -333,11 +333,22 @@ class MainActivity : Activity() {
                 view.invalidate()
             }
         }
+        val take = Button(this).apply {
+            isAllCaps = false
+            text = "Get zone picture"
+            // One key: the addon shows the zone's map art for a few seconds and the app takes it.
+            setOnClickListener {
+                pictureNote = "Asked the game for the zone picture…"
+                updateMap()
+                pressKey(ActionKeys.PICTURE) { err -> pictureNote = "Map picture not taken: $err"; updateMap() }
+            }
+        }
+        row.addView(take)
         row.addView(zoom)
         content.addView(row)
         content.addView(view, LinearLayout.LayoutParams(-1, maxOf(dp(240), scroll.height - dp(90))))
         content.addView(line("Tap a marker for its name. ! pick up a quest, yellow circle: do a quest there, ? turn in, F flight master, D dungeon, ★ rare, ● group. " +
-            "The yellow line is where you walked. Open the world map in the game (zoomed out, standing still) once per zone to get its picture here.", DIM, 12f))
+            "The yellow line is where you walked. Get zone picture shows the zone's map in the game for 3 seconds and keeps a picture of it here.", DIM, 12f))
         val note = line("", DIM, 12f)
         content.addView(note)
         pictureLine = note
@@ -358,7 +369,7 @@ class MainActivity : Activity() {
         view.picture = s?.mapId?.let { picture(it) }
         val where = if (s?.x != null && s.y != null && s.x!! > 0) String.format(Locale.US, "  %.1f, %.1f", s.x!! * 100, s.y!! * 100) else ""
         mapTitle?.text = (map?.zone?.ifEmpty { null } ?: "Map ${s?.mapId ?: "unknown"}") + where +
-            (if (s?.mapId != null && view.picture == null) "  (no picture of map ${s.mapId} yet)" else "")
+            (if (s?.mapId != null && view.picture == null) "  (no picture yet)" else "")
         pictureLine?.text = pictureNote
         view.invalidate()
     }

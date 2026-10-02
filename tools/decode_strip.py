@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Decode the Thor Companion data block (or an older strip) from a top-screen screenshot.
+"""Decode the Thor Companion data square from top-screen screenshots.
 
-Usage: decode_strip.py screenshot.png
+Usage: decode_strip.py screenshot.png [more.png ...]
 
-Finds the sync cells (magenta, green, magenta, green), measures the cell size
-(the game is upscaled on the Thor), reads the 64 calibration cells to learn
-how each palette colour actually looks on screen, then classifies every data
-cell to the nearest calibration colour. See addon/ThorCompanion/Strip.lua for
-the layout.
+Finds the sync row (lightest and darkest shade alternating, COLS cells), takes
+the cell size from it, reads the four calibration shades, then classifies every
+cell to the nearest of them. A message split into parts is put back together
+when all its parts are among the screenshots. See addon/ThorCompanion/Strip.lua
+for the layout; the app's decoder is decoder/.../StripDecoder.kt.
 """
 import sys
 from PIL import Image
 
-DATA = 72
-COLS = 48  # cells per row of the corner block (v3); v2 strips ran full width in 3 rows
-MAX_ROWS = 14
+COLS = 20
+CALIB = 8
+SCAN_ROWS = 400
+EDGE = 6  # smallest brightness step between neighbouring sync cells that counts
 
 
 def crc16(data: bytes) -> int:
@@ -26,121 +27,106 @@ def crc16(data: bytes) -> int:
     return crc
 
 
-# Loose classes: the display shifts colours, so test shape, not exact values.
-def magenta(p):
-    r, g, b = p[:3]
-    return r > 150 and b > 150 and g < min(r, b) - 80
-
-
-def green(p):
-    r, g, b = p[:3]
-    return g > 150 and r < g - 60 and b < g - 60
+def lum(p):
+    return (p[0] + p[1] + p[2]) / 3
 
 
 def sync_at(px, w, y):
-    """(x of first cell, cell width) if the sync cells are on this row, anywhere along it."""
-    for x in range(w):
-        if magenta(px[x, y]) and (x == 0 or not magenta(px[x - 1, y])):
-            found = sync_from(px, w, x, y)
-            if found:
-                return found
+    """(x of the first cell, cell width) if the sync row crosses row y."""
+    l = [lum(px[x, y]) for x in range(w)]
+    # Edges: where brightness steps up or down. A step blended over two pixels
+    # still gives one peak of the difference across three pixels.
+    d = [0.0] + [l[x + 1] - l[x - 1] for x in range(1, w - 1)] + [0.0]
+    edges = []
+    for x in range(1, w - 1):
+        if abs(d[x]) >= EDGE and abs(d[x]) >= abs(d[x - 1]) and abs(d[x]) > abs(d[x + 1]):
+            edges.append((x, 1 if d[x] > 0 else -1))
+    # The COLS - 1 edges between sync cells: evenly spaced, alternating, first one dark-going.
+    need = COLS - 1
+    for i in range(len(edges) - need + 1):
+        run = edges[i:i + need]
+        if run[0][1] != -1 or any(run[k][1] == run[k - 1][1] for k in range(1, need)):
+            continue
+        pitch = (run[-1][0] - run[0][0]) / (need - 1)
+        if pitch < 2.5 or any(abs(run[k][0] - run[0][0] - k * pitch) > max(1.5, pitch / 4) for k in range(need)):
+            continue
+        x0 = run[0][0] + 0.5 - pitch
+        if x0 < 0:
+            continue
+        # Light cells alike, dark cells alike, and clearly apart.
+        light = [l[int(x0 + (c + 0.5) * pitch)] for c in range(0, COLS, 2)]
+        dark = [l[int(x0 + (c + 0.5) * pitch)] for c in range(1, COLS, 2)]
+        if min(light) - max(dark) >= EDGE and max(light) - min(light) < EDGE and max(dark) - min(dark) < EDGE:
+            return x0, pitch
     return None
 
 
-def sync_from(px, w, x, y):
-    starts, want = [x], green
-    for xx in range(x, min(w, x + 200)):
-        if want(px[xx, y]):
-            starts.append(xx)
-            want = magenta if want is green else green
-            if len(starts) == 4:
-                cell = (starts[3] - starts[0]) / 3
-                # Real sync cells are evenly spaced; data cells that happen to be
-                # magenta and green rarely are.
-                slack = max(1.5, cell / 4)
-                even = all(abs(starts[i] - starts[i - 1] - cell) <= slack for i in (1, 2, 3))
-                return (starts[0], cell) if cell >= 2 and even else None
-    return None
-
-
-def find_strip(img):
-    """(x of first cell, middle y of the bottom cell row, cell size) or None."""
+def find_square(img):
+    """(x of first cell, middle y of the sync row, cell size) or None."""
     w, h = img.size
     px = img.load()
     first = first_sync = None
-    for y in range(h - 1, max(h - 300, -1), -1):
+    for y in range(min(h, SCAN_ROWS)):
         found = sync_at(px, w, y)
         if found and first is None:
             first, first_sync = y, found
-        elif first is not None and (not found or abs(found[0] - first_sync[0]) > 1
-                                    or abs(found[1] - first_sync[1]) > 1):
-            # The row above the sync cells ends the block, even when its own
-            # cells look like a sync at another place or size.
-            mid = (first + y + 1) // 2  # edge rows are blended; use the middle
-            x0, cell = sync_at(px, w, mid)
+        elif first is not None and (not found or abs(found[0] - first_sync[0]) > 1.5):
+            mid = (first + y - 1) // 2  # edge rows are blended; use the middle
+            x0, cell = sync_at(px, w, mid) or first_sync
             return x0, mid, cell
     return None
 
 
 def decode(img):
+    """One part: dict with seq, part, parts, payload bytes and crc_ok, or None."""
     img = img.convert("RGB")
-    found = find_strip(img)
+    found = find_square(img)
     if not found:
-        raise SystemExit("strip not found in the bottom 300 rows")
+        return None
     x0, y0, cell = found
-    w = img.size[0]
-    # The corner block (v3) sits against the right edge, a longer baseline for the
-    # cell size than the sync cells; an older full-width strip (v2) has 3 rows.
-    fit = (w - x0) / COLS
-    block = decode_at(img, x0, y0, fit if abs(fit - cell) <= cell * 0.15 else cell, COLS, MAX_ROWS)
-    wide = int((w - x0) / cell + 0.01)
-    if (block and block["crc_ok"]) or wide == COLS:
-        res = block
-    else:
-        strip = decode_at(img, x0, y0, cell, wide, 3)
-        res = strip if strip and strip["crc_ok"] else block
-    if not res:
-        raise SystemExit("strip found but unreadable")
-    return res
-
-
-def decode_at(img, x0, y0, cell, per_row, rows):
     px = img.load()
 
     def colour(i):
-        row, col = divmod(i, per_row)
-        return px[int(x0 + (col + 0.5) * cell), int(round(y0 - row * cell))][:3]
+        row, col = divmod(COLS + i, COLS)
+        return px[int(x0 + (col + 0.5) * cell), int(round(y0 + row * cell))]
 
-    palette = [colour(4 + p) for p in range(64)]
+    calib = [colour(c) for c in range(CALIB)]
+    shades = [tuple((calib[s][k] + calib[s + 4][k]) / 2 for k in range(3)) for s in range(4)]
 
     def sym(i):
         c = colour(i)
-        return min(range(64), key=lambda p: sum((a - b) ** 2 for a, b in zip(c, palette[p])))
+        return min(range(4), key=lambda s: sum((a - b) ** 2 for a, b in zip(c, shades[s])))
 
-    seq, version = sym(68), sym(69)
-    length = (sym(70) << 6) | sym(71)
-    nsyms = (length * 8 + 5) // 6
-    if DATA + nsyms + 3 > per_row * rows:
-        return None
-    bits, nbits, out = 0, 0, bytearray()
-    for i in range(DATA, DATA + nsyms):
-        bits = (bits << 6) | sym(i)
-        nbits += 6
-        while nbits >= 8 and len(out) < length:
-            nbits -= 8
-            out.append((bits >> nbits) & 0xFF)
-        bits &= (1 << nbits) - 1
-    end = DATA + nsyms
-    crc = (sym(end) << 12) | (sym(end + 1) << 6) | sym(end + 2)
-    # Smallest distance between two calibration colours: how much margin is left.
-    spread = min(sum((a - b) ** 2 for a, b in zip(palette[p], palette[q])) ** 0.5
-                 for p in range(64) for q in range(p + 1, 64))
-    return {"row": y0, "x": x0, "cell_px": round(cell, 2), "palette_min_distance": round(spread, 1),
-            "seq": seq, "version": version, "length": length,
-            "crc_ok": crc == crc16(bytes(out)), "payload": out.decode("utf-8", "replace")}
+    def byte(n):
+        i = CALIB + n * 4
+        return (sym(i) << 6) | (sym(i + 1) << 4) | (sym(i + 2) << 2) | sym(i + 3)
+
+    capacity = ((COLS - 1) * COLS - CALIB) // 4
+    head = bytes(byte(n) for n in range(4))
+    length = head[3]
+    if 4 + length + 2 > capacity:
+        return {"crc_ok": False, "why": f"bad length {length}"}
+    body = bytes(byte(4 + n) for n in range(length))
+    crc = (byte(4 + length) << 8) | byte(5 + length)
+    spread = min(sum((a - b) ** 2 for a, b in zip(shades[p], shades[q])) ** 0.5
+                 for p in range(4) for q in range(p + 1, 4))
+    return {"x": round(x0, 1), "row": y0, "cell_px": round(cell, 2), "shade_min_distance": round(spread, 1),
+            "version": head[0], "seq": head[1], "part": head[2] >> 4, "parts": (head[2] & 15) + 1,
+            "crc_ok": crc == crc16(head + body), "payload": body}
 
 
 if __name__ == "__main__":
-    res = decode(Image.open(sys.argv[1]))
-    for k, v in res.items():
-        print(f"{k}: {v}")
+    messages = {}
+    for path in sys.argv[1:]:
+        res = decode(Image.open(path))
+        if not res:
+            print(f"{path}: square not found")
+            continue
+        print(f"{path}: " + ", ".join(f"{k}={v}" for k, v in res.items() if k != "payload"))
+        if res["crc_ok"]:
+            messages.setdefault((res["seq"], res["parts"]), {})[res["part"]] = res["payload"]
+    for (seq, count), got in sorted(messages.items()):
+        if len(got) == count:
+            print(f"message {seq}: " + b"".join(got[i] for i in range(count)).decode("utf-8", "replace"))
+        else:
+            print(f"message {seq}: {len(got)} of {count} parts")

@@ -1,41 +1,50 @@
 -- Strip.lua
--- Draws a small block of 5x5-pixel colour cells in the bottom-right corner, a
--- little above the edge. The Thor's display path shifts colours a lot (pure green shows
--- as 117,251,76), so cells carry 6 bits each as an index into a 64-colour
--- palette (4 levels per channel), and every frame shows the whole palette so
--- the decoder can calibrate against what actually reached the screen.
+-- Draws the data for the companion app as a small square of dark grey cells in
+-- the top-right corner. The app reads the game's picture directly (no camera),
+-- so the cells only need to differ a little: four shades close to black, two
+-- bits per cell.
 --
--- Cells are numbered left to right, bottom row first (COLS cells per row):
---   0-3     sync: magenta, green, magenta, green
---   4-67    calibration: palette colours 0..63 in order
---   68      sequence number (0-63)
---   69      format version
---   70-71   payload length in bytes (12 bits)
---   72..    payload, 6 bits per cell, MSB first
---   then 3  CRC-16/CCITT of the payload (18 bits, top 2 zero)
--- The companion app decodes this from a capture of the top screen.
+-- The square is COLS x COLS cells, rows numbered from the top:
+--   row 0         sync: lightest and darkest shade alternating, starting light
+--   then, cell by cell (left to right, row by row from row 1):
+--     8 cells     calibration: shades 0,1,2,3,0,1,2,3
+--     4 bytes     header: format version, message number, part (index << 4 | count - 1), length
+--     length      payload bytes
+--     2 bytes     CRC-16/CCITT of the header and payload
+--   Every byte is 4 cells, most significant bits first.
+-- A message longer than one square is split into parts that are shown in turn
+-- (twice after it changes, then the square stays still); the app puts them back
+-- together. The companion app decodes this from a capture of the top screen.
 
 local _, ns = ...
 
-local CELL = 5          -- physical pixels per cell edge; about 7.5 screen pixels on the Thor
-local COLS = 48         -- cells per row: a fixed width, so the decoder knows the layout
-local ROWS = 14         -- 672 cells, room for 423 bytes as before
-local VERSION = 3
-local DATA = 72
+local COLS = 20
+local VERSION = 4
+local CALIB = 8
+local PART_BYTES = math.floor(((COLS - 1) * COLS - CALIB) / 4) - 4 - 2   -- 87
+local MAX_PARTS = 6
+local STEP_SECONDS = 0.35   -- per part; the app captures about five times a second
+local ROUNDS = 2
 
-local frame, cells, numCells, perRow
-local seq = 0
-local shown  -- the payload on screen now; the same payload again changes nothing
+local frame, cells
+local msgSeq = 0
+local message, parts, part, rounds = nil, {}, 1, 0
+local stepper
 
-local function setCell(i, sym)
-    local t = cells[i]
-    if not t then return end
-    local r, g, b = math.floor(sym / 16) % 4, math.floor(sym / 4) % 4, sym % 4
-    t:SetColorTexture(r / 3, g / 3, b / 3, 1)
+local function settings()
+    local db = ThorCompanionDB or {}
+    return db.cell or 3, db.shade or 24, db.right or 0, db.top or 22
 end
 
-local function setRaw(i, r, g, b)
-    cells[i]:SetColorTexture(r, g, b, 1)
+local function shade(level)
+    local _, step = settings()
+    local v = level * step / 255
+    return v, v, v
+end
+
+local function setCell(i, level)
+    local t = cells[i]
+    if t then t:SetColorTexture(shade(level)) t:SetAlpha(1) end
 end
 
 local function crc16(s)
@@ -53,85 +62,110 @@ local function crc16(s)
     return crc
 end
 
-local function build()
+local function place()
+    local cell, _, right, top = settings()
     local _, h = GetPhysicalScreenSize()
-    -- Parented to UIParent (an unparented frame did not render on the Thor),
-    -- ignoring its UI scale: with this scale 1 unit = 1 physical pixel.
+    -- Ignoring the UI scale, with this scale 1 unit = 1 physical pixel.
+    frame:SetScale(768 / h)
+    frame:SetSize(COLS * cell, COLS * cell)
+    frame:ClearAllPoints()
+    frame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -right, -top)
+    for i = 0, COLS * COLS - 1 do
+        local t = cells[i]
+        t:SetSize(cell, cell)
+        t:ClearAllPoints()
+        t:SetPoint("TOPLEFT", frame, "TOPLEFT", (i % COLS) * cell, -math.floor(i / COLS) * cell)
+    end
+end
+
+-- Draws one part: the sync row, calibration, header, payload and checksum.
+local function draw(index)
+    local body = parts[index]
+    local head = string.char(VERSION, msgSeq, (index - 1) * 16 + (#parts - 1), #body)
+    local bytes = head .. body
+    local crc = crc16(bytes)
+    bytes = bytes .. string.char(bit.rshift(crc, 8), bit.band(crc, 255))
+    for c = 0, COLS - 1 do setCell(c, c % 2 == 0 and 3 or 0) end
+    local i = COLS
+    for c = 0, CALIB - 1 do setCell(i, c % 4) i = i + 1 end
+    for p = 1, #bytes do
+        local b = bytes:byte(p)
+        for s = 3, 0, -1 do setCell(i, bit.band(bit.rshift(b, s * 2), 3)) i = i + 1 end
+    end
+    for j = i, COLS * COLS - 1 do setCell(j, 0) end
+end
+
+local function build()
+    -- Parented to UIParent (an unparented frame did not render on the Thor).
     frame = CreateFrame("Frame", "ThorCompanionStrip", UIParent)
     frame:SetIgnoreParentScale(true)
-    frame:SetScale(768 / h)
     frame:SetFrameStrata("TOOLTIP")
     frame:SetFrameLevel(9000)
-    frame:ClearAllPoints()
-    -- On the Thor the bottom ~15 rows of the 720-row picture are cut off by
-    -- the display, so the block sits a little above the edge.
-    frame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, ns.StripOffset or 32)
-    perRow = COLS
-    numCells = perRow * ROWS
-    frame:SetSize(perRow * CELL, ROWS * CELL)
     cells = {}
-    for i = 0, numCells - 1 do
+    for i = 0, COLS * COLS - 1 do
         local t = frame:CreateTexture(nil, "OVERLAY")
         t:SetSnapToPixelGrid(false)
         t:SetTexelSnappingBias(0)
-        t:SetSize(CELL, CELL)
-        t:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", (i % perRow) * CELL, math.floor(i / perRow) * CELL)
         t:SetColorTexture(0, 0, 0, 1)
         cells[i] = t
     end
-    setRaw(0, 1, 0, 1); setRaw(1, 0, 1, 0); setRaw(2, 1, 0, 1); setRaw(3, 0, 1, 0)
-    for p = 0, 63 do setCell(4 + p, p) end
+    place()
     frame:Show()
 end
 
--- For /thor info: whether the strip is on screen, and where.
+local function step()
+    if #parts < 2 or rounds <= 0 then return end
+    part = part + 1
+    if part > #parts then
+        part = 1
+        rounds = rounds - 1
+        if rounds <= 0 then part = #parts return end  -- stay on the last part shown
+    end
+    draw(part)
+end
+
+-- For /thor info: whether the square is on screen, and where.
 function ns.StripInfo()
     if not cells then build() end
     local w, h = GetPhysicalScreenSize()
     local l, b, fw, fh = frame:GetRect()
-    return string.format("screen %dx%d, shown=%s visible=%s, rect=%s,%s %sx%s, scale=%.3f",
+    local cell, shadeStep, right, top = settings()
+    return string.format("screen %dx%d, shown=%s visible=%s, rect=%s,%s %sx%s, cell=%d shade=%d right=%d top=%d",
         w, h, tostring(frame:IsShown()), tostring(frame:IsVisible()),
-        tostring(l), tostring(b), tostring(fw), tostring(fh), frame:GetEffectiveScale())
+        tostring(l), tostring(b), tostring(fw), tostring(fh), cell, shadeStep, right, top)
 end
 
--- Capacity in bytes for one frame of the strip.
+-- Largest message in bytes (split over up to MAX_PARTS parts).
 function ns.StripCapacity()
-    if not cells then build() end
-    return math.floor((numCells - DATA - 3) * 6 / 8)
+    return PART_BYTES * MAX_PARTS
+end
+
+-- True while a new message is still being shown for the first time; the caller
+-- waits with the next one, so the app sees every part.
+function ns.StripBusy()
+    return #parts > 1 and rounds >= ROUNDS
 end
 
 function ns.StripWrite(payload)
     if not cells then build() end
     if #payload > ns.StripCapacity() then payload = payload:sub(1, ns.StripCapacity()) end
-    if payload == shown then return end
-    shown = payload
-    seq = (seq + 1) % 64
-    setCell(68, seq)
-    setCell(69, VERSION)
-    setCell(70, bit.rshift(#payload, 6))
-    setCell(71, bit.band(#payload, 63))
-    local i, acc, nbits = DATA, 0, 0
-    for p = 1, #payload do
-        acc = bit.bor(bit.lshift(acc, 8), payload:byte(p)); nbits = nbits + 8
-        while nbits >= 6 do
-            nbits = nbits - 6
-            setCell(i, bit.band(bit.rshift(acc, nbits), 63)); i = i + 1
-        end
-        acc = bit.band(acc, bit.lshift(1, nbits) - 1)
+    if payload == message then return end
+    message = payload
+    msgSeq = (msgSeq + 1) % 256
+    parts = {}
+    for p = 1, math.max(1, math.ceil(#payload / PART_BYTES)) do
+        parts[p] = payload:sub((p - 1) * PART_BYTES + 1, p * PART_BYTES)
     end
-    if nbits > 0 then setCell(i, bit.band(bit.lshift(acc, 6 - nbits), 63)); i = i + 1 end
-    local crc = crc16(payload)
-    setCell(i, bit.rshift(crc, 12)); setCell(i + 1, bit.band(bit.rshift(crc, 6), 63)); setCell(i + 2, bit.band(crc, 63))
-    i = i + 3
-    for j = i, numCells - 1 do setCell(j, 0) end
+    part, rounds = 1, ROUNDS
+    draw(1)
+    if #parts > 1 and not stepper then stepper = C_Timer.NewTicker(STEP_SECONDS, step) end
 end
 
-function ns.StripMove(offset)
-    ns.StripOffset = offset
-    if frame then
-        frame:ClearAllPoints()
-        frame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, offset)
-    end
+-- Applies changed /thor cell, shade or position settings.
+function ns.StripRefresh()
+    if not cells then build() return end
+    place()
+    if message then draw(part) end
 end
 
 function ns.StripShow(show)

@@ -16,6 +16,7 @@ import android.widget.TextView
 import thor.companion.strip.ActionKeys
 import thor.companion.strip.GameState
 import thor.companion.strip.ItemNames
+import thor.companion.strip.PartAssembler
 import thor.companion.strip.StripDecoder
 import java.util.Locale
 
@@ -34,7 +35,6 @@ class MainActivity : Activity() {
     private val tabs = HashMap<Panel, Button>()
     private var panel = Panel.BAGS
     private var state: GameState? = null
-    private var lastSeq = -1
     private var gotKeys: Set<String> = emptySet()
     private var keyResult = ""
 
@@ -100,6 +100,7 @@ class MainActivity : Activity() {
             return
         }
         var misses = 0
+        val assembler = PartAssembler()
         while (worker === Thread.currentThread()) {
             val t0 = SystemClock.uptimeMillis()
             val px = screen.capture()
@@ -107,16 +108,19 @@ class MainActivity : Activity() {
             val frame = (result as? StripDecoder.Result.Ok)?.frame?.takeIf { it.crcOk }
             if (frame != null) {
                 misses = 0
-                val page = ItemNames.parse(frame.payload)
-                if (frame.payload.startsWith("TK1|")) {
-                    val keys = frame.payload.substring(4).split(',').filter { it.isNotEmpty() }.toSet()
-                    runOnUiThread { onKeys(keys) }
-                } else if (page != null) {
-                    val changed = names.addAll(page)
-                    runOnUiThread { onNames(changed) }
-                } else {
-                    val parsed = GameState.parse(frame.payload)
-                    runOnUiThread { onFrame(frame.seq, parsed) }
+                val message = assembler.add(frame)
+                val page = message?.let { ItemNames.parse(it) }
+                when {
+                    message == null -> {}
+                    message.startsWith("TK1|") -> {
+                        val keys = message.substring(4).split(',').filter { it.isNotEmpty() }.toSet()
+                        runOnUiThread { onKeys(keys) }
+                    }
+                    page != null -> {
+                        val changed = names.addAll(page)
+                        runOnUiThread { onNames(changed) }
+                    }
+                    else -> runOnUiThread { onMessage(message) }
                 }
             } else if (++misses == 4) {
                 val why = when {
@@ -126,16 +130,16 @@ class MainActivity : Activity() {
                 }
                 runOnUiThread { status.text = "No data from the addon ($why). Is the game open with ThorCompanion on?" }
             }
-            // The addon changes the strip every half second, alternating state and
-            // names, so read at least twice as often to see every frame.
+            // The addon shows each part of a longer message for about a third of a
+            // second, so read often enough to see every part.
             SystemClock.sleep((200 - (SystemClock.uptimeMillis() - t0)).coerceIn(30, 200))
         }
     }
 
-    private fun onFrame(seq: Int, parsed: GameState?) {
+    private fun onMessage(message: String) {
+        val parsed = GameState.parse(message, state)
         status.text = if (parsed == null) "Connected, but the addon sent something unexpected." else "Connected"
-        if (seq == lastSeq && parsed == state) return
-        lastSeq = seq
+        if (parsed == null || parsed == state) return
         state = parsed
         if (panel != Panel.KEYS) render()
     }

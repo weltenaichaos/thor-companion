@@ -2,12 +2,13 @@ package thor.companion
 
 import android.content.Context
 import thor.companion.strip.Pixels
+import thor.companion.strip.StripDecoder
 import java.io.File
 import java.io.RandomAccessFile
 
 /**
  * Captures the screen the game runs on with `screencap` (as root, raw RGBA, no PNG
- * encoding) and keeps only the bottom rows, where the addon's strip is.
+ * encoding) and keeps only the top rows, where the addon's data square is.
  */
 class TopScreen(private val context: Context) {
 
@@ -16,8 +17,8 @@ class TopScreen(private val context: Context) {
 
     private val file = File(context.cacheDir, "top.raw")
 
-    /** The bottom [rows] rows of the screen, or null when the capture failed. */
-    fun capture(rows: Int = 300): Pixels? {
+    /** The top [rows] rows of the screen, or null when the capture failed. */
+    fun capture(rows: Int = StripDecoder.SCAN_ROWS): Pixels? {
         val path = RootShell.quote(file.absolutePath)
         val uid = android.os.Process.myUid()
         val target = displayId?.takeIf { it.all(Char::isDigit) }?.let { "-d $it " } ?: ""
@@ -34,7 +35,7 @@ class TopScreen(private val context: Context) {
                 if (header !in 12..16) return null
                 val n = minOf(rows, h)
                 val buf = ByteArray(w * n * 4)
-                f.seek(header + (h - n).toLong() * w * 4)
+                f.seek(header)
                 f.readFully(buf)
                 RgbaPixels(w, n, buf)
             }

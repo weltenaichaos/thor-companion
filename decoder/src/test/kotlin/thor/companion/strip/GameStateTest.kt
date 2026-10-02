@@ -36,8 +36,24 @@ class GameStateTest {
     }
 
     @Test
+    fun combinesStatusAndBags() {
+        val bags = GameState.parse("TB1|17/26|4604:7:3,159:5")!!
+        assertEquals("?", bags.name)
+        val s = GameState.parse("TS1|Xandra|5|40912|1420|0.3187|0.6556", bags)!!
+        assertEquals("Xandra", s.name)
+        assertEquals(4L, s.gold)
+        assertEquals(1420, s.mapId)
+        assertEquals(17, s.freeSlots)
+        assertEquals(listOf(BagItem(4604, 7, 3), BagItem(159, 5)), s.items)
+        val moved = GameState.parse("TS1|Xandra|5|40912|1420|0.4000|0.6556", s)!!
+        assertEquals(0.4, moved.x)
+        assertEquals(s.items, moved.items)
+    }
+
+    @Test
     fun rejectsOtherPayloads() {
         assertNull(GameState.parse("TC1|error|Data.lua:12: boom"))
         assertNull(GameState.parse("hello"))
+        assertNull(GameState.parse("TS1|error|Data.lua:12: boom"))
     }
 }

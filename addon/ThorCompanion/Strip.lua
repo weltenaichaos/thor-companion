@@ -1,11 +1,11 @@
 -- Strip.lua
--- Draws a block of 6x6-pixel colour cells a little above the bottom edge of
--- the screen. The Thor's display path shifts colours a lot (pure green shows
+-- Draws a small block of 5x5-pixel colour cells in the bottom-right corner, a
+-- little above the edge. The Thor's display path shifts colours a lot (pure green shows
 -- as 117,251,76), so cells carry 6 bits each as an index into a 64-colour
 -- palette (4 levels per channel), and every frame shows the whole palette so
 -- the decoder can calibrate against what actually reached the screen.
 --
--- Cells are numbered left to right, bottom row first (ROWS rows):
+-- Cells are numbered left to right, bottom row first (COLS cells per row):
 --   0-3     sync: magenta, green, magenta, green
 --   4-67    calibration: palette colours 0..63 in order
 --   68      sequence number (0-63)
@@ -17,9 +17,10 @@
 
 local _, ns = ...
 
-local CELL = 6          -- physical pixels per cell edge; survives the Thor's upscaling
-local ROWS = 3
-local VERSION = 2
+local CELL = 5          -- physical pixels per cell edge; about 7.5 screen pixels on the Thor
+local COLS = 48         -- cells per row: a fixed width, so the decoder knows the layout
+local ROWS = 14         -- 672 cells, room for 423 bytes as before
+local VERSION = 3
 local DATA = 72
 
 local frame, cells, numCells, perRow
@@ -53,7 +54,7 @@ local function crc16(s)
 end
 
 local function build()
-    local w, h = GetPhysicalScreenSize()
+    local _, h = GetPhysicalScreenSize()
     -- Parented to UIParent (an unparented frame did not render on the Thor),
     -- ignoring its UI scale: with this scale 1 unit = 1 physical pixel.
     frame = CreateFrame("Frame", "ThorCompanionStrip", UIParent)
@@ -63,9 +64,9 @@ local function build()
     frame:SetFrameLevel(9000)
     frame:ClearAllPoints()
     -- On the Thor the bottom ~15 rows of the 720-row picture are cut off by
-    -- the display, so the strip sits a little above the edge.
-    frame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, ns.StripOffset or 32)
-    perRow = math.floor(w / CELL)
+    -- the display, so the block sits a little above the edge.
+    frame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, ns.StripOffset or 32)
+    perRow = COLS
     numCells = perRow * ROWS
     frame:SetSize(perRow * CELL, ROWS * CELL)
     cells = {}
@@ -129,7 +130,7 @@ function ns.StripMove(offset)
     ns.StripOffset = offset
     if frame then
         frame:ClearAllPoints()
-        frame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, offset)
+        frame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", 0, offset)
     end
 end
 

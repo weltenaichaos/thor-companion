@@ -10,8 +10,8 @@ later on will be one key press per tap.
 
 ## How it works
 
-1. The **ThorCompanion addon** (`addon/ThorCompanion`) draws a thin strip of coloured
-   cells near the bottom of the game screen. It only changes when the data does. The strip carries
+1. The **ThorCompanion addon** (`addon/ThorCompanion`) draws a small block of coloured
+   cells in the bottom-right corner of the game screen. It only changes when the data does. The strip carries
    the data: name, level, gold, map position, bag slots and bag contents, and in
    alternate frames the names of the items in your bags.
 2. The **app** (`app/`) runs on the bottom screen. It captures the top screen a
@@ -31,7 +31,7 @@ when the game starts. In game:
 
 - `/thor` shows the data being sent (state and the next page of item names).
 - `/thor info` shows where the strip is drawn.
-- `/thor offset N` moves the strip N pixels up from the bottom edge (default 32).
+- `/thor offset N` moves the block N pixels up from the bottom edge (default 32).
 - `/thor hide` and `/thor show` turn the strip off and on.
 - `/thor taps off` and `/thor taps on` turn tap-to-use off and on (default on). With it on,
   every bag slot has its own key (CTRL-F1 and up), bound out of combat, and tapping an

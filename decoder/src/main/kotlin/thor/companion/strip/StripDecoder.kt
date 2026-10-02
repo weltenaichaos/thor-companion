@@ -33,9 +33,12 @@ data class StripFrame(
  * calibration cells that the same frame carries.
  */
 object StripDecoder {
-    const val ROWS = 3
     const val DATA = 72
-    const val VERSION = 2
+    const val VERSION = 3
+
+    /** Cells per row of the corner block (version 3). Version 2 strips ran across the whole width in 3 rows. */
+    const val COLS = 48
+    private const val MAX_ROWS = 14
 
     /** How far up from the bottom edge the strip is searched for. */
     private const val SCAN_ROWS = 300
@@ -47,7 +50,20 @@ object StripDecoder {
 
     fun decode(px: Pixels): Result {
         val (x0, y0, cell) = findStrip(px) ?: return Result.Failed("strip not found")
-        val perRow = ((px.width - x0) / cell + 0.01).toInt()
+        // The corner block (v3) has a fixed width; an older full-width strip (v2)
+        // reaches the right edge. Try the block first and keep whichever checks out.
+        val wide = ((px.width - x0) / cell + 0.01).toInt()
+        // The block sits against the right edge, which gives a much longer baseline for
+        // the cell size than the four sync cells (7.5-pixel cells measure as 7 or 8).
+        val fit = (px.width - x0) / COLS.toDouble()
+        val blockCell = if (Math.abs(fit - cell) <= cell * 0.15) fit else cell
+        val block = decodeAt(px, x0, y0, blockCell, COLS, MAX_ROWS)
+        if (block is Result.Ok && block.frame.crcOk || wide == COLS) return block
+        val strip = decodeAt(px, x0, y0, cell, wide, 3)
+        return if (strip is Result.Ok && strip.frame.crcOk) strip else block
+    }
+
+    private fun decodeAt(px: Pixels, x0: Int, y0: Int, cell: Double, perRow: Int, rows: Int): Result {
 
         fun colour(i: Int): Int {
             val row = i / perRow
@@ -73,7 +89,7 @@ object StripDecoder {
         val version = sym(69)
         val length = (sym(70) shl 6) or sym(71)
         val nsyms = (length * 8 + 5) / 6
-        if (DATA + nsyms + 3 > perRow * ROWS) return Result.Failed("bad length $length")
+        if (DATA + nsyms + 3 > perRow * rows) return Result.Failed("bad length $length")
 
         val out = ByteArray(length)
         var n = 0
@@ -137,11 +153,17 @@ object StripDecoder {
         return g > 150 && r < g - 60 && b < g - 60
     }
 
-    /** (x of the first cell, cell width) if the sync cells start on row [y]. */
+    /** (x of the first cell, cell width) if the sync cells are on row [y], anywhere along it. */
     private fun syncAt(px: Pixels, y: Int): Pair<Int, Double>? {
         var x = 0
-        while (x < 40 && x < px.width && !magenta(px.rgb(x, y))) x++
-        if (x == 40 || x == px.width) return null
+        while (x < px.width) {
+            if (magenta(px.rgb(x, y)) && (x == 0 || !magenta(px.rgb(x - 1, y)))) syncFrom(px, x, y)?.let { return it }
+            x++
+        }
+        return null
+    }
+
+    private fun syncFrom(px: Pixels, x: Int, y: Int): Pair<Int, Double>? {
         val starts = IntArray(4)
         starts[0] = x
         var found = 1

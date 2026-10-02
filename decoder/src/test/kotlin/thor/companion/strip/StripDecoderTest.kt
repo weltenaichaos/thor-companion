@@ -38,6 +38,25 @@ class StripDecoderTest {
         assertTrue(frame.crcOk)
         assertEquals(payload, frame.payload)
         assertEquals(7, frame.seq)
+        assertEquals(StripDecoder.VERSION, frame.version)
+    }
+
+    /** The block is all the decoder needs: nothing else of the screen has to look a certain way. */
+    @Test
+    fun findsBlockWithMagentaAndGreenElsewhereInTheRow() {
+        val payload = "TC1|X|5|0|1|0|0|1/16|6948:1:1"
+        val base = render(payload, seq = 2)
+        val noisy = object : Pixels by base {
+            // A magenta, green, magenta pattern at the left of every row, unevenly spaced.
+            override fun rgb(x: Int, y: Int) = when (x) {
+                in 10..20, in 40..44 -> 0xEA33F6
+                in 25..33 -> 0x75FB4C
+                else -> base.rgb(x, y)
+            }
+        }
+        val frame = assertIs<StripDecoder.Result.Ok>(StripDecoder.decode(noisy)).frame
+        assertTrue(frame.crcOk)
+        assertEquals(payload, frame.payload)
     }
 
     /** Unshifted colours: data cells above the sync can look like another sync and must not move it. */
@@ -64,14 +83,15 @@ class StripDecoderTest {
     }
 
     /**
-     * Encodes [payload] the way Strip.lua does on a 1280x720 game frame, then shows it the
+     * Encodes [payload] the way Strip.lua does (a corner block) on a 1280x720 game frame, then shows it the
      * way the Thor does: 1.5x upscale to 1920 wide, colours pushed through a shifting
      * matrix, and the bottom rows cropped.
      */
     private fun render(payload: String, seq: Int, flipCell: Int = -1, shiftColours: Boolean = true): Pixels {
-        val gw = 1280; val gh = 720; val cell = 6; val offset = 32
-        val perRow = gw / cell
-        val syms = IntArray(perRow * StripDecoder.ROWS)
+        val gw = 1280; val gh = 720; val cell = 5; val offset = 32
+        val perRow = StripDecoder.COLS
+        val left = gw - perRow * cell
+        val syms = IntArray(perRow * 14)
         val raw = HashMap<Int, Int>()
         raw[0] = 0xFF00FF; raw[1] = 0x00FF00; raw[2] = 0xFF00FF; raw[3] = 0x00FF00
         for (p in 0 until 64) syms[4 + p] = p
@@ -96,7 +116,7 @@ class StripDecoderTest {
                 val s = syms[c]
                 (level(s / 16 % 4) shl 16) or (level(s / 4 % 4) shl 8) or level(s % 4)
             }
-            val x0 = (c % perRow) * cell
+            val x0 = left + (c % perRow) * cell
             val yBottom = gh - 1 - offset - (c / perRow) * cell
             for (dy in 0 until cell) for (dx in 0 until cell) game[(yBottom - dy) * gw + x0 + dx] = colour
         }

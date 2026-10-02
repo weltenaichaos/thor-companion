@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decode the Thor Companion data strip from a top-screen screenshot.
+"""Decode the Thor Companion data block (or an older strip) from a top-screen screenshot.
 
 Usage: decode_strip.py screenshot.png
 
@@ -12,8 +12,9 @@ the layout.
 import sys
 from PIL import Image
 
-ROWS = 3
 DATA = 72
+COLS = 48  # cells per row of the corner block (v3); v2 strips ran full width in 3 rows
+MAX_ROWS = 14
 
 
 def crc16(data: bytes) -> int:
@@ -37,12 +38,16 @@ def green(p):
 
 
 def sync_at(px, w, y):
-    """(x of first cell, cell width) if the sync cells start on this row."""
-    x = 0
-    while x < 40 and not magenta(px[x, y]):
-        x += 1
-    if x == 40:
-        return None
+    """(x of first cell, cell width) if the sync cells are on this row, anywhere along it."""
+    for x in range(w):
+        if magenta(px[x, y]) and (x == 0 or not magenta(px[x - 1, y])):
+            found = sync_from(px, w, x, y)
+            if found:
+                return found
+    return None
+
+
+def sync_from(px, w, x, y):
     starts, want = [x], green
     for xx in range(x, min(w, x + 200)):
         if want(px[xx, y]):
@@ -83,8 +88,24 @@ def decode(img):
     if not found:
         raise SystemExit("strip not found in the bottom 300 rows")
     x0, y0, cell = found
+    w = img.size[0]
+    # The corner block (v3) sits against the right edge, a longer baseline for the
+    # cell size than the sync cells; an older full-width strip (v2) has 3 rows.
+    fit = (w - x0) / COLS
+    block = decode_at(img, x0, y0, fit if abs(fit - cell) <= cell * 0.15 else cell, COLS, MAX_ROWS)
+    wide = int((w - x0) / cell + 0.01)
+    if (block and block["crc_ok"]) or wide == COLS:
+        res = block
+    else:
+        strip = decode_at(img, x0, y0, cell, wide, 3)
+        res = strip if strip and strip["crc_ok"] else block
+    if not res:
+        raise SystemExit("strip found but unreadable")
+    return res
+
+
+def decode_at(img, x0, y0, cell, per_row, rows):
     px = img.load()
-    per_row = int((img.size[0] - x0) / cell + 0.01)
 
     def colour(i):
         row, col = divmod(i, per_row)
@@ -99,8 +120,8 @@ def decode(img):
     seq, version = sym(68), sym(69)
     length = (sym(70) << 6) | sym(71)
     nsyms = (length * 8 + 5) // 6
-    if DATA + nsyms + 3 > per_row * ROWS:
-        raise SystemExit(f"bad length {length}: strip found but unreadable")
+    if DATA + nsyms + 3 > per_row * rows:
+        return None
     bits, nbits, out = 0, 0, bytearray()
     for i in range(DATA, DATA + nsyms):
         bits = (bits << 6) | sym(i)

@@ -158,6 +158,38 @@ local function nextMessage()
     end
 end
 
+-- Everything again, from the start: for an app that was just started or
+-- reinstalled (its Refresh button presses ALT-SHIFT-F12).
+function ns.SendAllAgain()
+    lastSent, chatAgain, sentCount = {}, true, {}
+end
+
+local refreshOwner = CreateFrame("Frame")
+local refreshButton = CreateFrame("Button", "ThorCompanionRefresh", UIParent)
+refreshButton:RegisterForClicks("AnyUp", "AnyDown")
+local refreshedAt = 0
+refreshButton:SetScript("OnClick", function()
+    if GetTime() - refreshedAt < 0.5 then return end
+    refreshedAt = GetTime()
+    ns.SendAllAgain()
+end)
+local refreshPending = false
+
+function ns.BindRefreshKey()
+    if InCombatLockdown() then refreshPending = true return end
+    refreshPending = false
+    ClearOverrideBindings(refreshOwner)
+    if ns.TapsEnabled() then
+        SetOverrideBindingClick(refreshOwner, true, ns.ActionKeys[ns.RefreshKey], refreshButton:GetName())
+    end
+end
+
+refreshOwner:RegisterEvent("PLAYER_LOGIN")
+refreshOwner:RegisterEvent("PLAYER_REGEN_ENABLED")
+refreshOwner:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_LOGIN" or refreshPending then ns.BindRefreshKey() end
+end)
+
 local ticker
 local ticks = 0
 local f = CreateFrame("Frame")

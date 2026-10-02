@@ -57,6 +57,10 @@ when the game starts. In game:
   Tapping a line in the Chat tab starts a whisper to whoever wrote it: the app presses one
   key (ALT-SHIFT-F1..F10, one per recent sender) and the game opens the chat box with
   "/w Name "; you type and send the message in the game.
+- ALT-SHIFT-F12 makes the addon send everything again; the app's "Load from the game"
+  button presses it (shown while the bags or character haven't arrived, for example right
+  after installing the app). The app also keeps the last bags, character and map across
+  restarts, but bag taps wait until fresh bags have arrived.
 - `/thor taps off` and `/thor taps on` turn tap-to-use off and on (default on). With it on,
   every bag slot has its own key (CTRL-F1 and up), bound out of combat, and tapping an
   item in the app's Bags tab presses that one key, which uses the item. It also turns the

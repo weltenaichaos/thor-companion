@@ -101,6 +101,7 @@ class MainActivity : Activity() {
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
         runCatching { trail.load(trailFile().readText()) }
+        loadLast()
         show(Panel.BAGS)
         status.text = "Looking for the game…"
     }
@@ -113,10 +114,45 @@ class MainActivity : Activity() {
     override fun onStop() {
         worker = null
         saveTrail()
+        saveLast()
         super.onStop()
     }
 
     private fun trailFile() = java.io.File(filesDir, "trail.txt")
+
+    // The last message of each kind that describes the game's state, kept so a restarted
+    // app shows the bags, character and map right away instead of after the addon's
+    // next refresh (or a tap on Refresh).
+    /** False while the bags shown are the ones kept from before a restart: then a tap could use whatever moved into that slot since. */
+    private var bagsFresh = false
+    private val lastMessages = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private fun lastFile() = java.io.File(filesDir, "last-messages.txt")
+
+    private fun remember(message: String) {
+        val kind = message.take(4)
+        if (kind !in KEPT || lastMessages[kind] == message) return
+        lastMessages[kind] = message
+        if (kind != "TS1|") saveLast()
+    }
+
+    private fun saveLast() = runCatching {
+        // One message per record; messages contain newlines, so records are separated by a NUL.
+        lastFile().writeText(lastMessages.values.joinToString("\u0000"))
+    }
+
+    private fun loadLast() = runCatching {
+        if (!lastFile().exists()) return@runCatching
+        for (m in lastFile().readText().split('\u0000')) {
+            if (m.length < 4) continue
+            lastMessages[m.take(4)] = m
+            when {
+                m.startsWith("TM1|") -> zoneMap = ZoneMap.parse(m)
+                m.startsWith("TP1|") -> character = CharacterInfo.parse(m)
+                m.startsWith("TQ1|") -> gear = Gear.parse(m).orEmpty()
+                else -> GameState.parse(m, state)?.let { state = it }
+            }
+        }
+    }
 
     private fun saveTrail() {
         if (trailUnsaved == 0) return
@@ -150,6 +186,7 @@ class MainActivity : Activity() {
                 val message = assembler.add(frame)
                 val page = message?.let { ItemNames.parse(it) }
                 if (message?.startsWith("TS1|") == true) movedAt = SystemClock.uptimeMillis()
+                if (message != null) remember(message)
                 when {
                     message == null -> {}
                     message.startsWith("TH1|") -> runOnUiThread { onChat(message) }
@@ -196,8 +233,12 @@ class MainActivity : Activity() {
     }
 
     private fun onMessage(message: String) {
+        if (message.startsWith("TB1|") && !bagsFresh) {
+            bagsFresh = true
+            if (panel == Panel.BAGS) render()
+        }
         val parsed = GameState.parse(message, state)
-        status.text = if (parsed == null) "Connected, but the addon sent something unexpected." else "Connected"
+        status.text = if (parsed == null) "Connected, but the addon sent something unexpected: ${message.take(80)}" else "Connected"
         if (parsed == null || parsed == state) return
         val moved = parsed.copy(x = state?.x, y = state?.y, facing = state?.facing) == state
         state = parsed
@@ -331,6 +372,7 @@ class MainActivity : Activity() {
     /** Name, level, experience, item level, stats and what you wear. */
     private fun renderCharacter(s: GameState) {
         val c = character
+        if (c == null) content.addView(refreshButton())
         content.addView(line(s.name, c?.classFile?.let { classColour(it) } ?: TEXT, 26f, bold = true))
         content.addView(line(listOfNotNull("Level ${s.level ?: "?"}", c?.race, c?.className).joinToString(" "), TEXT, 17f))
         c?.guild?.let { content.addView(line("<$it>", DIM, 15f)) }
@@ -388,6 +430,15 @@ class MainActivity : Activity() {
             })
         }
         content.addView(grid)
+    }
+
+    /** One key that makes the addon send everything again. */
+    private fun refreshButton() = Button(this).apply {
+        isAllCaps = false
+        text = "Load from the game"
+        setOnClickListener {
+            pressKey(ActionKeys.REFRESH, onDone = { status.text = "Asked the game for everything again…" }) { err -> status.text = "Couldn't ask the game: $err" }
+        }
     }
 
     /** WoW's class colours. */
@@ -588,6 +639,10 @@ class MainActivity : Activity() {
                 val key = item.key?.let { ActionKeys.forIndex(it) }
                 val label = known?.name ?: "the item"
                 setOnClickListener { v ->
+                    if (!bagsFresh) {
+                        status.text = "These are your bags from before; tap Load from the game to update them before using items."
+                        return@setOnClickListener
+                    }
                     if (key == null) {
                         status.text = "$label has no tap key yet. Is the new addon loaded? /thor taps in game shows the keys."
                         return@setOnClickListener
@@ -610,7 +665,10 @@ class MainActivity : Activity() {
             })
         }
         content.addView(grid)
-        if (s.items.isEmpty()) content.addView(line("Your bags are empty.", DIM))
+        if (s.freeSlots == null || !bagsFresh) {
+            content.addView(line(if (s.freeSlots == null) "The bags haven't arrived yet." else "These are your bags from before; they update when the game sends them.", DIM))
+            content.addView(refreshButton())
+        } else if (s.items.isEmpty()) content.addView(line("Your bags are empty.", DIM))
         else if (s.items.any { it.key != null }) content.addView(line("Tap an item to use it.", DIM))
     }
 
@@ -643,6 +701,8 @@ class MainActivity : Activity() {
     private companion object {
         /** Must match ns.TestKeys in addon/ThorCompanion/KeyTest.lua. */
         /** The paper doll's slots, left column then right, as Character.lua sends them. */
+        /** Message kinds kept across restarts. */
+        val KEPT = setOf("TS1|", "TB1|", "TM1|", "TP1|", "TQ1|")
         val GEAR_SLOTS = listOf(1, 2, 3, 15, 5, 4, 19, 9, 10, 6, 7, 8, 11, 12, 13, 14, 16, 17)
         val TEST_KEYS = listOf("CTRL", "ALT").flatMap { mod -> (1..12).map { "$mod-F$it" } } - "ALT-F4" +
             listOf("F9", "SHIFT-F9", "CTRL-SHIFT-F9", "NUMPAD5")

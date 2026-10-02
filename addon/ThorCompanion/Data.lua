@@ -5,8 +5,8 @@
 --   TB1|free/total|itemID:count:key,itemID:count:key,...    (the bags)
 --   (key: the slot's tap key, an index into ns.ActionKeys; left out when unbound)
 --   TN1|itemID,quality,name<newline>itemID,quality,name...   (names of bag items, a page at a time)
--- The app keeps the names it has seen. Everything is sent again once a minute,
--- for an app that started after the game.
+-- The app keeps the names it has seen. State and bags are sent again every five
+-- minutes and names every half hour, for an app that started after the game.
 
 local _, ns = ...
 
@@ -69,9 +69,11 @@ local function itemName(id)
 end
 
 -- Each name is sent twice (so the app surely sees it), then left out until the
--- minute's refresh, so the strip stays still unless something changes.
+-- half-hourly refresh, so the square stays still unless something changes.
 local SENDS = 2
-local REFRESH_TICKS = 120  -- one minute of half-second ticks
+local REFRESH_TICKS = 600       -- five minutes: state and bags again, for an app started late
+local NAMES_REFRESH_TICKS = 3600 -- half an hour: names again (the app keeps the ones it has)
+local MOVE_SECONDS = 4           -- while walking, the position is sent at most this often
 local sentCount = {}
 
 -- The next page of names that still need sending, or nil when there are none.
@@ -103,13 +105,25 @@ end
 local kinds = { status, bags, namesPayload }
 local lastSent = {}
 local turn = 0
+local statusAt = 0
+
+-- The status line without its position, to tell walking from other changes.
+local function withoutPosition(p)
+    return p and (p:match("^(.*)|[^|]*|[^|]*$") or p)
+end
 
 local function nextMessage()
     for _ = 1, #kinds do
         turn = turn % #kinds + 1
         local ok, p = pcall(kinds[turn])
         if not ok then p = "TS1|error|" .. tostring(p) end
+        -- Every change redraws the square, so a moving position is sent only now and then.
+        if turn == 1 and p and lastSent[1] and withoutPosition(p) == withoutPosition(lastSent[1])
+            and GetTime() - statusAt < MOVE_SECONDS then
+            p = lastSent[1]
+        end
         if p and p ~= lastSent[turn] then
+            if turn == 1 then statusAt = GetTime() end
             lastSent[turn] = p
             return p
         end
@@ -125,7 +139,8 @@ f:SetScript("OnEvent", function()
     ns.StripShow(ThorCompanionDB.hidden ~= true)
     ticker = C_Timer.NewTicker(0.5, function()
         ticks = ticks + 1
-        if ticks % REFRESH_TICKS == 0 then sentCount, lastSent = {}, {} end
+        if ticks % REFRESH_TICKS == 0 then lastSent = {} end
+        if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
         local test = ns.KeyTestPayload and ns.KeyTestPayload()
         if test then ns.StripWrite(test) lastSent = {} return end
         if ns.StripBusy() then return end

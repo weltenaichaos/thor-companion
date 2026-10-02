@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: Thor Companion
 ## Notes: Shows game data on the Ayn Thor's bottom screen through a thin strip along the bottom edge, and lets a tap on a bag item there use it (one tap, one key press).
-## Version: 0.7.1
+## Version: 0.7.2
 ## SavedVariables: ThorCompanionDB
 
 Strip.lua

@@ -114,8 +114,9 @@ function ns.MapPayload()
     return head .. "\n" .. table.concat(out, "\n")
 end
 
--- The zone picture: each zoomed-out world map is offered once per session, for
--- PICTURE_SECONDS, after it has been still for a moment (the app takes it then).
+-- The zone picture: each zoomed-out world map is offered for PICTURE_SECONDS,
+-- after it has been still for a moment (the app takes it then): once per
+-- session, and again whenever more of the zone has been explored since.
 local PICTURE_SECONDS = 3
 local offered = {}
 local stillSince, stillMap, offerUntil, offerMap = 0, nil, 0, nil
@@ -218,8 +219,9 @@ function ns.MapPicturePayload()
     if mapID ~= stillMap then stillMap, stillSince = mapID, now end
     if offerMap ~= mapID or now > offerUntil then
         if art then art:Hide() end
-        if offered[mapID] or now - stillSince < 1 then return nil end
-        offered[mapID] = true
+        local explored = #(C_MapExplorationInfo.GetExploredMapTextures(mapID) or {})
+        if offered[mapID] == explored or now - stillSince < 1 then return nil end
+        offered[mapID] = explored
         offerMap, offerUntil = mapID, now + PICTURE_SECONDS
         local drawn, okArt = pcall(drawArt, mapID)
         if not drawn or not okArt then

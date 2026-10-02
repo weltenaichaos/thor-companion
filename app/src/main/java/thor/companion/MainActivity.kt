@@ -52,6 +52,8 @@ class MainActivity : Activity() {
 
     @Volatile private var worker: Thread? = null
     @Volatile private var lastKeyAt = 0L
+    /** When the last status (with the position) came in: it is only sent when something changed. */
+    private var movedAt = 0L
     /** Start time and duration (ms) of each capture in the last minute, for the battery check. */
     private val captures = java.util.ArrayDeque<LongArray>()
     /** Key presses go out one at a time, in the order they were tapped. */
@@ -142,6 +144,7 @@ class MainActivity : Activity() {
                 near = frame.row
                 val message = assembler.add(frame)
                 val page = message?.let { ItemNames.parse(it) }
+                if (message?.startsWith("TS1|") == true) movedAt = SystemClock.uptimeMillis()
                 when {
                     message == null -> {}
                     message.startsWith("TH1|") -> runOnUiThread { onChat(message) }
@@ -172,8 +175,12 @@ class MainActivity : Activity() {
             // right after a tap, when the bags are about to change. Slower still
             // while the game isn't showing the square at all.
             val fast = assembler.waiting || SystemClock.uptimeMillis() - lastKeyAt < 3000
+            // While you walk the position changes all the time: look more often, so the
+            // arrow on the map keeps up, and slow down again once you stand still.
+            val walking = SystemClock.uptimeMillis() - movedAt < 3000
             val period = when {
                 fast -> 200L
+                walking -> 400L
                 misses > 30 -> 3000L
                 else -> 1000L
             }

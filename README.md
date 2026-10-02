@@ -45,9 +45,13 @@ when the game starts. In game:
   `off` (the default) leaves them out. Say, yell, emotes, whispers, party, raid, instance,
   guild and system lines are always sent. During boss fights the game hides chat from
   addons, so those lines show as hidden.
+  Tapping a line in the Chat tab starts a whisper to whoever wrote it: the app presses one
+  key (ALT-SHIFT-F1..F10, one per recent sender) and the game opens the chat box with
+  "/w Name "; you type and send the message in the game.
 - `/thor taps off` and `/thor taps on` turn tap-to-use off and on (default on). With it on,
   every bag slot has its own key (CTRL-F1 and up), bound out of combat, and tapping an
-  item in the app's Bags tab presses that one key, which uses the item.
+  item in the app's Bags tab presses that one key, which uses the item. It also turns the
+  whisper keys off and on.
 - `/thor keytest` binds the CTRL and ALT function keys to a button that only prints their name, to check that
   the app's Keys tab reaches the game (keys that arrive turn green in the app). Run it again to give the keys back.
 

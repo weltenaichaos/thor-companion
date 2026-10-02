@@ -24,6 +24,14 @@ do
     end
 end
 
+-- ALT-SHIFT-F1..F10 open whispers (Chat.lua); bag slots get the other keys.
+ns.WhisperKeys = {}
+local reserved = {}
+for i, key in ipairs(ns.ActionKeys) do
+    local n = tonumber(key:match("^ALT%-SHIFT%-F(%d+)$"))
+    if n and n <= 10 then ns.WhisperKeys[n] = i reserved[i] = true end
+end
+
 local owner = CreateFrame("Frame")
 local buttons = {}
 local slotKey = {}     -- "bag:slot" -> index into ns.ActionKeys
@@ -56,6 +64,7 @@ end
 local function enabled()
     return not (ThorCompanionDB and ThorCompanionDB.taps == false)
 end
+ns.TapsEnabled = enabled
 
 -- Binds one key per bag slot. Only out of combat; otherwise it waits until combat ends.
 function ns.BindSlots()
@@ -68,6 +77,7 @@ function ns.BindSlots()
     for bag = 0, 4 do
         for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
             i = i + 1
+            while reserved[i] do i = i + 1 end
             local key = ns.ActionKeys[i]
             if not key then return end
             local b = button(i)
@@ -96,6 +106,7 @@ end
 function ns.SetTaps(on)
     ThorCompanionDB.taps = on
     ns.BindSlots()
+    ns.BindWhispers()
 end
 
 local sizes = ""

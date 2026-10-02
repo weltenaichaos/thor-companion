@@ -242,7 +242,7 @@ class MainActivity : Activity() {
     /** The chat lines, newest at the bottom, coloured like WoW's chat frame. */
     private fun renderChat() {
         if (chat.lines.isEmpty()) {
-            content.addView(line("No chat yet. New lines in say, whispers, party, raid, guild and system messages show up here.", DIM))
+            content.addView(line("No chat yet. New lines in say, whispers, party, raid, guild and system messages show up here. Tap a line to whisper its sender.", DIM))
             return
         }
         for (l in chat.lines.takeLast(100)) content.addView(chatLine(l))
@@ -250,16 +250,19 @@ class MainActivity : Activity() {
     }
 
     private fun chatLine(l: ChatLine): TextView {
+        val n = l.name
         val who = when {
-            l.sender.isEmpty() -> ""
-            l.kind == "whisper" -> "${l.sender} whispers: "
-            l.kind == "whisper_to" -> "To ${l.sender}: "
-            l.kind == "emote" -> "${l.sender} "
-            l.kind == "yell" -> "${l.sender} yells: "
-            else -> "${l.sender}: "
+            n.isEmpty() -> ""
+            l.kind == "whisper" -> "$n whispers: "
+            l.kind == "whisper_to" -> "To $n: "
+            l.kind == "emote" -> "$n "
+            l.kind == "yell" -> "$n yells: "
+            l.channel.isNotEmpty() -> "[${l.channel}] $n: "
+            else -> "$n: "
         }
         val colour = when (l.kind) {
             "whisper", "whisper_to" -> Color.rgb(255, 128, 255)
+            "bnwhisper", "bnwhisper_to" -> Color.rgb(0, 255, 246)
             "party" -> Color.rgb(170, 170, 255)
             "raid" -> Color.rgb(255, 127, 0)
             "instance" -> Color.rgb(255, 127, 0)
@@ -270,7 +273,15 @@ class MainActivity : Activity() {
             "channel" -> Color.rgb(255, 192, 192)
             else -> TEXT
         }
-        return line(who + l.text, colour, 15f).apply { setPadding(0, dp(2), 0, dp(2)) }
+        val view = line(who + l.text, colour, 15f).apply { setPadding(0, dp(2), 0, dp(2)) }
+        // Tap a line: one key that opens the whisper box for its sender in the game.
+        val key = chat.whisperSlot(l.sender)?.let { ActionKeys.forWhisper(it) } ?: return view
+        view.setOnClickListener {
+            pressKey(key, onDone = { status.text = "Whisper to $n: type your message in the game" }) { err ->
+                status.text = "Whisper to $n: $err"
+            }
+        }
+        return view
     }
 
     /** Key test: each button sends one key to the game's screen; `/thor keytest` in game prints what arrives. */

@@ -10,9 +10,11 @@
 --   g group member
 -- The app draws these together with the path you walked, over a picture of the
 -- zone it took itself: when you open the world map (zoomed out, standing still),
+-- the addon covers it for a few seconds with a clean copy (the same map art,
+-- without quest icons, your arrow or other addons' marks), and
 --   TW1|mapID|left|top|width|height|cell
--- says where the map is on screen, in game pixels from the top-left corner of the
--- data square, so the app can cut the map out of one screenshot and keep it.
+-- says where that is on screen, in game pixels from the top-left corner of the
+-- data square, so the app can cut it out of one screenshot and keep it.
 
 local _, ns = ...
 
@@ -125,6 +127,80 @@ local function physical(frame)
     return l * k, (b + h) * k, w * k, h * k
 end
 
+-- The clean copy: the map's art tiles and the explored areas on top, drawn like
+-- the world map does it (Blizzard's MapCanvasDetailLayer and MapExplorationPin).
+local art, artTextures = nil, {}
+
+local function texture(i)
+    local t = artTextures[i]
+    if not t then
+        t = art:CreateTexture(nil, "ARTWORK")
+        artTextures[i] = t
+    end
+    t:SetTexCoord(0, 1, 0, 1)
+    t:Show()
+    return t
+end
+
+-- Sizes in the map art's own pixels; k turns them into the frame's units.
+local function drawArt(mapID)
+    if not art then
+        art = CreateFrame("Frame", nil, UIParent)
+        art:SetFrameStrata("FULLSCREEN_DIALOG")
+        art:SetClipsChildren(true)
+        local bg = art:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetColorTexture(0, 0, 0, 1)
+    end
+    for _, t in ipairs(artTextures) do t:Hide() end
+    local layer = (C_Map.GetMapArtLayers(mapID) or {})[1]
+    if not layer then return false end
+    art:ClearAllPoints()
+    art:SetAllPoints(WorldMapFrame.ScrollContainer.Child)
+    local k = art:GetWidth() / layer.layerWidth
+    local n = 0
+    local cols = math.ceil(layer.layerWidth / layer.tileWidth)
+    for i, file in ipairs(C_Map.GetMapArtLayerTextures(mapID, 1) or {}) do
+        n = n + 1
+        local t = texture(n)
+        t:SetTexture(file, nil, nil, "TRILINEAR")
+        t:SetSize(layer.tileWidth * k, layer.tileHeight * k)
+        t:ClearAllPoints()
+        t:SetPoint("TOPLEFT", art, "TOPLEFT", ((i - 1) % cols) * layer.tileWidth * k, -math.floor((i - 1) / cols) * layer.tileHeight * k)
+    end
+    for _, e in ipairs(C_MapExplorationInfo.GetExploredMapTextures(mapID) or {}) do
+        if not e.isShownByMouseOver then
+            for row = 1, e.numTexturesTall do
+                local h, fileH = 256, 256
+                if row == e.numTexturesTall then
+                    h = e.textureHeight % 256
+                    if h == 0 then h = 256 end
+                    fileH = 16
+                    while fileH < h do fileH = fileH * 2 end
+                end
+                for col = 1, e.numTexturesWide do
+                    local w, fileW = 256, 256
+                    if col == e.numTexturesWide then
+                        w = e.textureWidth % 256
+                        if w == 0 then w = 256 end
+                        fileW = 16
+                        while fileW < w do fileW = fileW * 2 end
+                    end
+                    n = n + 1
+                    local t = texture(n)
+                    t:SetTexture(e.fileDataIDs[(row - 1) * e.numTexturesWide + col], nil, nil, "TRILINEAR")
+                    t:SetTexCoord(0, w / fileW, 0, h / fileH)
+                    t:SetSize(w * k, h * k)
+                    t:ClearAllPoints()
+                    t:SetPoint("TOPLEFT", art, "TOPLEFT", (e.offsetX + 256 * (col - 1)) * k, -(e.offsetY + 256 * (row - 1)) * k)
+                end
+            end
+        end
+    end
+    art:Show()
+    return n > 0
+end
+
 function ns.MapPicturePayload()
     local wm = WorldMapFrame
     local now = GetTime()
@@ -134,15 +210,26 @@ function ns.MapPicturePayload()
         if wm:GetAlpha() < 0.99 or IsPlayerMoving() then return end
         return wm:GetMapID()
     end)
-    if not ok or not mapID then stillMap = nil return nil end
+    if not ok or not mapID then
+        stillMap = nil
+        if art then art:Hide() end
+        return nil
+    end
     if mapID ~= stillMap then stillMap, stillSince = mapID, now end
     if offerMap ~= mapID or now > offerUntil then
+        if art then art:Hide() end
         if offered[mapID] or now - stillSince < 1 then return nil end
         offered[mapID] = true
         offerMap, offerUntil = mapID, now + PICTURE_SECONDS
+        local drawn, okArt = pcall(drawArt, mapID)
+        if not drawn or not okArt then
+            if art then art:Hide() end
+            offerUntil = 0
+            return nil
+        end
     end
     local sl, st = physical(ns.StripFrame())
-    local cl, ct, cw, ch = physical(WorldMapFrame.ScrollContainer.Child)
+    local cl, ct, cw, ch = physical(art)
     if not sl or not cl then return nil end
     local r = function(v) return math.floor(v + 0.5) end
     return string.format("TW1|%d|%d|%d|%d|%d|%d", mapID, r(cl - sl), r(st - ct), r(cw), r(ch), (ThorCompanionDB and ThorCompanionDB.cell) or 3)

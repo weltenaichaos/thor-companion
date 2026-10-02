@@ -21,8 +21,9 @@ later on will be one key press per tap.
    The Map tab draws the zone from those places, with an arrow for you and a line where
    you walked; "Around me" zooms in. Its background is a picture of the zone the app
    takes itself: open the world map in the game once per zone (zoomed out, standing
-   still) and the addon says where it is on screen, so the app can cut it out of one
-   screenshot. Until then the background is a grid.
+   still). The addon covers it for a few seconds with a clean copy of the map art (no
+   quest icons, arrow or other addons' marks) and says where that is on screen, so the
+   app can cut it out of one screenshot. Until then the background is a grid.
 3. The **decoder** (`decoder/`) is plain Kotlin that the app uses. It is tested
    against a square drawn by the addon, upscaled and colour-shifted like on the Thor.
 

@@ -12,7 +12,8 @@
 -- zone it took itself: its "Get zone picture" button presses one key
 -- (ALT-SHIFT-F11), and the addon shows the zone's map art (the same art as the
 -- world map, without quest icons, arrows or other addons' marks) in the middle
--- of the screen for a few seconds, while
+-- of the screen for a few seconds (and once by itself, the first time you are in
+-- a zone), while
 --   TW1|mapID|left|top|width|height|cell
 -- says where that is, in game pixels from the top-left corner of the data
 -- square, so the app can cut it out of one screenshot and keep it.
@@ -232,7 +233,25 @@ function ns.MapPictureShow()
         return
     end
     pictureMap, pictureUntil = mapID, GetTime() + PICTURE_SECONDS
+    ThorCompanionDB.pictured = ThorCompanionDB.pictured or {}
+    ThorCompanionDB.pictured[mapID] = true
     note = "showed map " .. mapID .. " at " .. date("%H:%M:%S") .. ", " .. exploredNote
+end
+
+-- No key: the first time you are in a zone (for a few seconds, out of combat), its
+-- picture is shown once by itself, so the app has it without a tap. True when shown.
+local AUTO_WAIT = 3
+local zoneID, zoneSince = nil, 0
+function ns.MapPictureAuto()
+    if ThorCompanionDB.auto == false or InCombatLockdown() then return false end
+    local id = C_Map.GetBestMapForUnit("player")
+    if id ~= zoneID then zoneID, zoneSince = id, GetTime() return false end
+    if not id or GetTime() - zoneSince < AUTO_WAIT or GetTime() <= pictureUntil then return false end
+    ThorCompanionDB.pictured = ThorCompanionDB.pictured or {}
+    if ThorCompanionDB.pictured[id] then return false end
+    ThorCompanionDB.pictured[id] = true  -- once, even when this zone has no map art
+    ns.MapPictureShow()
+    return GetTime() <= pictureUntil
 end
 
 -- TW1 while the art is up, else nil (and the art goes away).

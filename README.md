@@ -28,6 +28,10 @@ later on will be one key press per tap.
    Item icons on the Bags and Character tabs come the same way: "Get icons" presses
    CTRL-SHIFT-F12, the addon shows up to 60 icons of your bag and worn items in a grid for
    5 seconds, and the app keeps each one. Press it again for the next 60.
+   Both also happen without a tap: the first time you are in a zone the addon shows its
+   picture once by itself, and icons of items it has not shown before (new loot) appear
+   under the data square for a moment, out of combat. `/thor auto off` stops that.
+   The map is sent again every minute, so a restarted app is soon up to date.
 3. The **decoder** (`decoder/`) is plain Kotlin that the app uses. It is tested
    against a square drawn by the addon, upscaled and colour-shifted like on the Thor.
 
@@ -53,6 +57,8 @@ when the game starts. In game:
   `/thor shape square` goes back.
 - `/thor map` prints what the zone picture did last and the places sent for the Map tab;
   `/thor map picture` shows the zone picture like the app's button.
+- `/thor auto off` and `/thor auto on` stop and restart the zone pictures and new item
+  icons that come up by themselves (default on).
 - `/thor icons` shows the next page of item icons like the app's "Get icons" button.
 - `/thor hide` and `/thor show` turn the square off and on.
 - `/thor chat channels on` adds public channels (General, Trade, ...) to the app's Chat tab;

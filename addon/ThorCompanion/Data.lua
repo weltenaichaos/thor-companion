@@ -85,6 +85,7 @@ end
 local SENDS = 2
 local REFRESH_TICKS = 600       -- five minutes: state and bags again, for an app started late
 local NAMES_REFRESH_TICKS = 600  -- five minutes: names again, for an app that was reinstalled
+local MAP_REFRESH_TICKS = 120   -- one minute: the map again, so a restarted app is soon up to date
 local MOVE_SECONDS = 0.7         -- while walking, the position is sent at most this often
 local sentCount = {}
 
@@ -207,6 +208,7 @@ f:SetScript("OnEvent", function()
         ticks = ticks + 1
         if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain = {}, true end
         if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
+        if ticks % MAP_REFRESH_TICKS == 0 then lastSent[5] = nil end
         local test = ns.KeyTestPayload and ns.KeyTestPayload()
         if test then ns.StripWrite(test) lastSent = {} return end
         -- The zone picture is up: say where, so the app can take it.
@@ -216,6 +218,11 @@ f:SetScript("OnEvent", function()
         local okIcons, icons = pcall(ns.IconsPayload)
         if okIcons and icons then ns.StripWrite(icons) lastSent = {} return end
         if ns.StripBusy() then return end
+        -- What the app has no picture of yet comes up by itself, one at a time.
+        local okAuto, shown = pcall(ns.MapPictureAuto)
+        if okAuto and shown then return end
+        okAuto, shown = pcall(ns.IconsAuto)
+        if okAuto and shown then return end
         local p = nextMessage()
         if p then ns.StripWrite(p) end
     end)
@@ -253,6 +260,9 @@ SlashCmdList.THORCOMPANION = function(msg)
         print("|cff66ccffThor Companion|r public channels in the app's chat " .. (msg:sub(-2) == "on" and "on" or "off"))
     elseif msg == "map picture" then
         ns.MapPictureShow()
+    elseif msg == "auto on" or msg == "auto off" then
+        ThorCompanionDB.auto = (msg == "auto on")
+        print("|cff66ccffThor Companion|r zone pictures and new item icons by themselves " .. (msg == "auto on" and "on" or "off"))
     elseif msg == "icons" then
         ns.IconsShow()
         print("|cff66ccffThor Companion|r " .. ns.IconsInfo())

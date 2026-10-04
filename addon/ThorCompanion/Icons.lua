@@ -10,10 +10,14 @@
 -- there are per row, and which item each one is, row by row. The app cuts them
 -- out of one screenshot and keeps them. A press shows up to PAGE icons; the next
 -- press shows the next ones.
+-- Without any key, items the addon has not shown yet (new loot) are shown the same
+-- way for a moment, under the data square, out of combat (`/thor auto off` stops it).
 
 local _, ns = ...
 
 local SECONDS = 5
+local SHORT_SECONDS = 2.5   -- a few new icons: one part, the app reads it at once
+local AUTO_GAP = 10         -- seconds between two automatic showings
 local SIZE, GAP, COLS = 40, 8, 12
 local PAGE = 60
 local frame, textures = nil, {}
@@ -54,7 +58,8 @@ local function draw(ids)
     frame:SetScale(768 / select(2, GetPhysicalScreenSize()))
     frame:SetSize(GAP + math.min(#ids, COLS) * step, GAP + rows * step)
     frame:ClearAllPoints()
-    frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    -- Under the data square, out of the way of the middle of the screen.
+    frame:SetPoint("TOPRIGHT", ns.StripFrame(), "BOTTOMRIGHT", 0, -4)
     for i, id in ipairs(ids) do
         local t = textures[i]
         if not t then
@@ -63,7 +68,7 @@ local function draw(ids)
             t:SetTexCoord(0.08, 0.92, 0.08, 0.92)
             textures[i] = t
         end
-        t:SetTexture(C_Item.GetItemIconByID(id) or 134400)  -- 134400: the question mark
+        t:SetTexture(C_Item.GetItemIconByID(id))
         t:SetSize(SIZE, SIZE)
         t:ClearAllPoints()
         t:SetPoint("TOPLEFT", frame, "TOPLEFT", GAP + ((i - 1) % COLS) * step, -(GAP + math.floor((i - 1) / COLS) * step))
@@ -72,22 +77,56 @@ local function draw(ids)
     frame:Show()
 end
 
+-- Items whose icon the game knows; the others are asked for and wait for a later showing.
+local function ready(ids)
+    local out = {}
+    for _, id in ipairs(ids) do
+        if C_Item.GetItemIconByID(id) then out[#out + 1] = id else C_Item.RequestLoadItemDataByID(id) end
+    end
+    return out
+end
+
+local function show(ids)
+    local ok, err = pcall(draw, ids)
+    if not ok then
+        note = "could not draw the icons: " .. tostring(err)
+        if frame then frame:Hide() end
+        return false
+    end
+    ThorCompanionDB.icons = ThorCompanionDB.icons or {}
+    for _, id in ipairs(ids) do ThorCompanionDB.icons[id] = true end
+    shownIDs, shownUntil = ids, GetTime() + (#ids <= 12 and SHORT_SECONDS or SECONDS)
+    return true
+end
+
 -- The key: show the next page of icons.
 function ns.IconsShow()
-    local all = allIDs()
+    local all = ready(allIDs())
     if #all == 0 then note = "no items to show" return end
     page = page + 1
     if (page - 1) * PAGE >= #all then page = 1 end
     local ids = {}
     for i = (page - 1) * PAGE + 1, math.min(#all, page * PAGE) do ids[#ids + 1] = all[i] end
-    local ok, err = pcall(draw, ids)
-    if not ok then
-        note = "could not draw the icons: " .. tostring(err)
-        if frame then frame:Hide() end
-        return
+    if show(ids) then
+        note = string.format("showed icons %d to %d of %d at %s", (page - 1) * PAGE + 1, (page - 1) * PAGE + #ids, #all, date("%H:%M:%S"))
     end
-    shownIDs, shownUntil = ids, GetTime() + SECONDS
-    note = string.format("showed icons %d to %d of %d at %s", (page - 1) * PAGE + 1, (page - 1) * PAGE + #ids, #all, date("%H:%M:%S"))
+end
+
+-- No key: the icons of items not shown before, now and then, out of combat. True when it showed some.
+local autoAt = -100
+function ns.IconsAuto()
+    if ThorCompanionDB.auto == false or InCombatLockdown() or GetTime() - autoAt < AUTO_GAP then return false end
+    if GetTime() <= shownUntil then return false end
+    local seen = ThorCompanionDB.icons or {}
+    local new = {}
+    for _, id in ipairs(ready(allIDs())) do
+        if not seen[id] and #new < PAGE then new[#new + 1] = id end
+    end
+    if #new == 0 then return false end
+    autoAt = GetTime()
+    if not show(new) then return false end
+    note = string.format("showed %d new icons by itself at %s", #new, date("%H:%M:%S"))
+    return true
 end
 
 -- TI1 while the icons are up, else nil (and the icons go away).

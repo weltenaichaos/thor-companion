@@ -65,6 +65,16 @@ class ChatLogTest {
     }
 
     @Test
+    fun readsTheChannelsYouAreIn() {
+        val log = ChatLog()
+        assertTrue(log.add("TH1|1\tA\t1 General,2 Trade,4 LookingForGroup\n")!!)
+        assertEquals(listOf(1 to "General", 2 to "Trade", 4 to "LookingForGroup"), log.channels)
+        assertFalse(log.add("TH1|1\tA\t1 General,2 Trade,4 LookingForGroup\n")!!)
+        assertTrue(log.add("TH1|1\tA\t1 General\n")!!)
+        assertEquals(listOf(1 to "General"), log.channels)
+    }
+
+    @Test
     fun ignoresOtherMessages() {
         assertNull(ChatLog().add("TS1|x|1|0|0|0|0"))
     }

@@ -66,15 +66,16 @@ when the game starts. In game:
   icons that come up by themselves (default on).
 - `/thor icons` shows the next page of item icons like the app's "Get icons" button.
 - `/thor hide` and `/thor show` turn the square off and on.
-- `/thor chat channels on` adds public channels (General, Trade, ...) to the app's Chat tab;
-  `off` (the default) leaves them out. Say, yell, emotes, whispers, party, raid, instance,
+- Public channels (General, Trade, ...) are in the app's Chat tab (General) with a write
+  button each; `/thor chat channels off` leaves their lines out, `on` brings them back. Say, yell, emotes, whispers, party, raid, instance,
   guild and system lines are always sent. During boss fights the game hides chat from
   addons, so those lines show as hidden.
   The Chat tab has its own tabs (All, Group, Whispers, Guild, General). A button under
   each, or a tap on a line (to whisper its sender), opens a text field with the keyboard
   on the bottom screen. Send presses CTRL-SHIFT-F8, which the addon binds to the game's
   own Open Chat command (like Enter), waits until the addon says the box is open (TE1),
-  types "/r ", "/s ", "/g ", your group's command or "/w Name " with the message and
+  types "/r ", "/s ", "/g ", "/1 " (a channel), your group's command or "/w Name " with
+  the message (a message you start with "/" yourself goes in as written) and
   presses Enter. The addon never opens the chat box itself: the game blocks addons that
   do (the "blocked from an action only available to the Blizzard UI" popup).
 - ALT-SHIFT-F12 makes the addon send everything again; the app's "Load from the game"

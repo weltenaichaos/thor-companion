@@ -749,13 +749,17 @@ class MainActivity : Activity() {
             ChatTab.GROUP -> listOf("Write to your group" to GROUP)
             ChatTab.WHISPERS -> listOf("Reply to the last whisper" to "/r ")
             ChatTab.GUILD -> listOf("Write to your guild" to "/g ")
-            ChatTab.GENERAL -> listOf("Say something" to "/s ")
+            ChatTab.GENERAL -> listOf("Say" to "/s ") + chat.channels.map { (id, name) -> name to "/$id " }
         }
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(6), 0, 0) }
-        for ((label, command) in answers) {
-            row.addView(chip(label) { compose(label, command) }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(4) })
+        // Four buttons per row; more channels get more rows.
+        for (group in answers.chunked(4)) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(6), 0, 0) }
+            for ((label, command) in group) {
+                row.addView(chip(label) { compose(label, command) }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(4) })
+            }
+            repeat(if (answers.size > 4) 4 - group.size else 0) { row.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f)) }
+            footer.addView(row)
         }
-        footer.addView(row)
     }
 
     private fun chatSeq(i: Int) = chat.total - chat.lines.size + i + 1
@@ -1037,9 +1041,14 @@ class MainActivity : Activity() {
             }
             val box = chatBox
             if (box == null || box.first == before || !box.second) {
-                return@execute runOnUiThread { say("$label not sent: the game's chat box didn't open (a game menu open, or the addon older than v40?)") }
+                return@execute runOnUiThread { say("$label not sent: the game's chat box didn't open (a game menu open, or the addon older than v41?)") }
             }
-            val prefix = if (command == GROUP) box.third.ifEmpty { "/p " } else command
+            // Your own "/1 ...", "/2 ..." and so on goes in as you wrote it.
+            val prefix = when {
+                text.startsWith("/") -> ""
+                command == GROUP -> box.third.ifEmpty { "/p " }
+                else -> command
+            }
             val typed = KeySender.type(this, target, prefix + text)
             if (typed != null && !typed.startsWith("(focus")) return@execute runOnUiThread { say("$label not sent: $typed") }
             KeySender.send(this, target, "ENTER")

@@ -11,7 +11,7 @@ data class ChatLine(val kind: String, val sender: String, val text: String, val 
 
 /**
  * The chat lines the app has received, oldest first, from the addon's
- * `TH1|<session>\t<names>\n<id>\t<kind>\t<sender>\t<channel>\t<text>\n...` messages.
+ * `TH1|<session>\t<names>\t<channels>\n<id>\t<kind>\t<sender>\t<channel>\t<text>\n...` messages.
  * Lines sent again (after a refresh) are recognised by session and number and kept once.
  */
 class ChatLog(private val keep: Int = 200) {
@@ -28,6 +28,10 @@ class ChatLog(private val keep: Int = 200) {
     var whisperNames: List<String> = emptyList()
         private set
 
+    /** The public channels you are in, by number: 1 to "General", 2 to "Trade", ... */
+    var channels: List<Pair<Int, String>> = emptyList()
+        private set
+
     /** The whisper slot (1-based) for [sender], or null when the addon has no key for them now. */
     fun whisperSlot(sender: String): Int? =
         if (sender.isEmpty()) null else whisperNames.indexOf(sender).takeIf { it >= 0 }?.plus(1)
@@ -36,11 +40,16 @@ class ChatLog(private val keep: Int = 200) {
     fun add(payload: String): Boolean? {
         if (!payload.startsWith("TH1|")) return null
         val rows = payload.substring(4).split('\n')
-        val head = rows.first().split('\t', limit = 2)
+        val head = rows.first().split('\t', limit = 3)
         val session = head[0]
         val names = head.getOrNull(1)?.split(',') ?: emptyList()
-        var added = names != whisperNames
+        val chans = head.getOrNull(2)?.split(',')?.mapNotNull { c ->
+            val (id, name) = c.split(' ', limit = 2).takeIf { it.size == 2 } ?: return@mapNotNull null
+            id.toIntOrNull()?.let { it to name }
+        } ?: channels
+        var added = names != whisperNames || chans != channels
         whisperNames = names
+        channels = chans
         for (row in rows.drop(1)) {
             val f = row.split('\t', limit = 5)
             if (f.size < 5) continue

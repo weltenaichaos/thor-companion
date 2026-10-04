@@ -1,6 +1,6 @@
 -- Chat.lua
 -- Keeps the recent chat lines so the app's Chat tab can show them. Sent as
---   TH1|<session><tab><whisper names><newline><id><tab><kind><tab><sender><tab><channel><tab><text><newline>...
+--   TH1|<session><tab><whisper names><tab><channels><newline><id><tab><kind><tab><sender><tab><channel><tab><text><newline>...
 -- with only the lines the app has not been sent yet (after a refresh, the last
 -- few again). <session> changes with every login or /reload, so the app knows
 -- when the line numbers start over. <sender> is Name-Realm as the game gives it.
@@ -8,11 +8,12 @@
 -- <whisper names> lists the last people who wrote, comma separated. Colour codes, links and icons are reduced to
 -- plain text. During chat lockdown (boss fights) the game hides lines from
 -- addons; those arrive as "(hidden by the game during combat)".
--- Public channels (General, Trade, ...) are left out unless /thor chat channels on.
+-- <channels> are the public channels you are in, like "1 General,2 Trade", so the
+-- app can offer to write in each. Their lines are sent too, unless /thor chat channels off.
 --
 -- Answering: CTRL-SHIFT-F8 is the game's own Open Chat key (like Enter). The app
 -- presses it, waits for TE1 to say the box is open, then types "/w Name ", "/r ",
--- "/s ", "/g " or your group's command with your message and presses Enter.
+-- "/s ", "/g ", "/1 " (a channel) or your group's command with your message and presses Enter.
 
 local _, ns = ...
 
@@ -135,7 +136,7 @@ chatOwner:SetScript("OnEvent", function(_, event)
 end)
 
 local function add(kind, sender, channel, text)
-    if kind == "channel" and not (ThorCompanionDB and ThorCompanionDB.chatChannels) then return end
+    if kind == "channel" and ThorCompanionDB and ThorCompanionDB.chatChannels == false then return end
     if secret(text) then text = "(hidden by the game during combat)" else text = plain(tostring(text or "")) end
     if secret(sender) then sender = "?" else sender = plain(tostring(sender or "")) end
     -- "2. Trade - City" is shown as "Trade", like the chat frame does.
@@ -158,11 +159,27 @@ f:SetScript("OnEvent", function(_, event, text, sender, _, channelName)
     add(kind, sender, kind == "channel" and channelName or "", text)
 end)
 
--- The lines not sent yet (all that fit), or nil when there are none. With
--- again, the last RESEND lines (for an app that started late).
+-- The public channels you are in: "1 General,2 Trade,...".
+local function channels()
+    local ok, list = pcall(function() return { GetChannelList() } end)
+    if not ok then return "" end
+    local out = {}
+    for i = 1, #list - 1, 3 do
+        local id, name, disabled = list[i], list[i + 1], list[i + 2]
+        if not secret(id) and not secret(name) and tonumber(id) and name and not disabled then
+            out[#out + 1] = tonumber(id) .. " " .. plain(tostring(name)):gsub("[,\t]", " ")
+        end
+    end
+    return table.concat(out, ",")
+end
+local sentChannels = nil
+
+-- The lines not sent yet (all that fit), or nil when there are none (and the
+-- channels didn't change). With again, the last RESEND lines (for an app that started late).
 function ns.ChatPayload(again, peek)
     local from = again and math.max(1, nextId - RESEND) or sentUpTo + 1
-    local room = ns.StripCapacity() - 32 - WHISPER_SLOTS * 30
+    local chans = channels()
+    local room = ns.StripCapacity() - 32 - #chans - WHISPER_SLOTS * 30
     local out, used, last = {}, 0, nil
     for _, l in ipairs(lines) do
         if l[1] >= from then
@@ -173,11 +190,14 @@ function ns.ChatPayload(again, peek)
             last = l[1]
         end
     end
-    if not last then return nil end
-    if not peek then sentUpTo = math.max(sentUpTo, last) end
+    if not last and chans == sentChannels and not again then return nil end
+    if not peek then
+        if last then sentUpTo = math.max(sentUpTo, last) end
+        sentChannels = chans
+    end
     local names = {}
     for n = 1, WHISPER_SLOTS do names[n] = whisperName[n] or "" end
-    return "TH1|" .. session .. "\t" .. table.concat(names, ",") .. "\n" .. table.concat(out, "\n")
+    return "TH1|" .. session .. "\t" .. table.concat(names, ",") .. "\t" .. chans .. "\n" .. table.concat(out, "\n")
 end
 
 -- For /thor chat channels on|off.

@@ -1,0 +1,67 @@
+package thor.companion.strip
+
+/** One quest in the log: ready to turn in, in this zone, the experience it gives and its objectives. */
+data class Quest(val id: Int, val ready: Boolean, val here: Boolean, val xp: Long, val title: String, val objectives: List<Objective>)
+
+/** An objective in the game's words ("4/8 Boar Ribs"), and whether it is done. */
+data class Objective(val text: String, val done: Boolean)
+
+/**
+ * The quest log from the addon's
+ * `TL1|lastKill|readyCount|readyXP\n<id>\t<r|z|o>\t<xp>\t<title>\t<objective>;<objective>...`
+ * (see addon/ThorCompanion/Quests.lua). [lastKill] is the experience of the last kill
+ * without its rested bonus, 0 when not known yet. The ready numbers cover the whole
+ * log, also quests that did not fit in the message.
+ */
+data class QuestLog(val lastKill: Long, val readyCount: Int, val readyXp: Long, val quests: List<Quest>) {
+    companion object {
+        fun parse(payload: String): QuestLog? {
+            if (!payload.startsWith("TL1|")) return null
+            val rows = payload.substring(4).split('\n')
+            val head = rows[0].split('|')
+            if (head.size < 3) return null
+            val quests = rows.drop(1).mapNotNull { row ->
+                val f = row.split('\t', limit = 5)
+                if (f.size < 4) return@mapNotNull null
+                val objectives = f.getOrNull(4).orEmpty().split(';').filter { it.isNotEmpty() }
+                    .map { if (it.startsWith("+")) Objective(it.substring(1), true) else Objective(it, false) }
+                Quest(f[0].toIntOrNull() ?: return@mapNotNull null, f[1] == "r", f[1] != "o", f[2].toLongOrNull() ?: 0, f[3], objectives)
+            }
+            return QuestLog(head[0].toLongOrNull() ?: 0, head[1].toIntOrNull() ?: 0, head[2].toLongOrNull() ?: 0, quests)
+        }
+    }
+}
+
+/**
+ * What it takes to reach the next level: experience to go, and how many kills
+ * that is with the last kill's experience, counting the rested bonus (a kill gives
+ * double while rested lasts, and uses up the bonus part of the rested pool).
+ */
+data class LevelPlan(val toGo: Long, val percent: Double, val kills: Int?, val killsAfterQuests: Int?, val questsEnough: Boolean) {
+    companion object {
+        fun of(xp: Long, xpMax: Long, rested: Long, lastKill: Long, readyXp: Long): LevelPlan? {
+            if (xpMax <= 0) return null
+            val toGo = (xpMax - xp).coerceAtLeast(0)
+            val afterQuests = (toGo - readyXp).coerceAtLeast(0)
+            return LevelPlan(
+                toGo, xp * 100.0 / xpMax,
+                kills(toGo, lastKill, rested), kills(afterQuests, lastKill, rested), readyXp >= toGo && readyXp > 0,
+            )
+        }
+
+        /** Kills for [need] experience at [perKill] each, or null when the kill experience is unknown. */
+        fun kills(need: Long, perKill: Long, rested: Long): Int? {
+            if (perKill <= 0) return null
+            var left = need
+            var pool = rested
+            var n = 0
+            while (left > 0 && n < 100_000) {
+                val bonus = minOf(perKill, pool)
+                left -= perKill + bonus
+                pool -= bonus
+                n++
+            }
+            return n
+        }
+    }
+}

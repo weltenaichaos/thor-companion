@@ -30,6 +30,8 @@ class MapView(context: Context) : View(context) {
     var span = 0.4
     /** Whether quest objective areas are drawn. */
     var questAreas = true
+    /** A quest title whose places are marked more strongly (tapped in the Quests tab). */
+    var highlight: String? = null
     /** Called with the place nearest to a tap. */
     var onPlace: (MapPlace) -> Unit = {}
     /** Called after a pinch changed [close] or [span]. */
@@ -55,6 +57,7 @@ class MapView(context: Context) : View(context) {
         pathEffect = android.graphics.DashPathEffect(floatArrayOf(5 * d, 4 * d), 0f)
     }
     private val areaText = Paint(text).apply { textAlign = Paint.Align.CENTER; color = Color.rgb(255, 226, 130); textSize = 10 * d }
+    private val marked = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 3 * d }
     private val bounds = android.graphics.RectF()
     private val arrow = Path()
     private val me = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
@@ -137,6 +140,15 @@ class MapView(context: Context) : View(context) {
             }
         }
 
+        // The quest tapped in the Quests tab: a white ring round each of its places, whatever the toggles.
+        val title = highlight
+        if (title != null) for (place in zone?.places.orEmpty()) {
+            if (place.kind !in "qQa" || !matches(place.label, title)) continue
+            val r = if (place.kind == 'q') (0.03 / shown * w).toFloat() else 13 * d
+            canvas.drawCircle(sx(place.x), sy(place.y), r, marked)
+            if (place.kind == 'q' && !zoomed) canvas.drawText(short(place.label), sx(place.x), sy(place.y) + 4 * d, areaText)
+        }
+
         if (px != null && py != null) {
             canvas.save()
             canvas.translate(sx(px), sy(py))
@@ -188,6 +200,9 @@ class MapView(context: Context) : View(context) {
     }
 
     override fun performClick(): Boolean = super.performClick()
+
+    /** The addon cuts long labels with "…", so a label matches a title it starts. */
+    private fun matches(label: String, title: String) = label.isNotEmpty() && title.startsWith(label.removeSuffix("…"))
 
     private fun short(s: String) = if (s.length > 18) s.take(17) + "…" else s
 

@@ -20,6 +20,10 @@ class ChatLog(private val keep: Int = 200) {
     private val _lines = ArrayDeque<ChatLine>()
     val lines: List<ChatLine> get() = _lines
 
+    /** How many lines were ever added: line i of [lines] is number total - lines.size + i + 1. */
+    var total = 0
+        private set
+
     /** Who has which whisper key right now: slot n (1-based) is ALT-SHIFT-F<n>. */
     var whisperNames: List<String> = emptyList()
         private set
@@ -44,6 +48,7 @@ class ChatLog(private val keep: Int = 200) {
             if (!seen.add(key)) continue
             order.addLast(key)
             _lines.addLast(ChatLine(f[1], f[2], f[4], f[3]))
+            total++
             added = true
             if (_lines.size > keep) {
                 _lines.removeFirst()

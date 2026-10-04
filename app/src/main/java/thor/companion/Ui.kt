@@ -26,6 +26,8 @@ object Theme {
     val COPPER = Color.rgb(222, 140, 90)
     val XP = Color.rgb(160, 80, 220)
     val RESTED = Color.rgb(70, 110, 200)
+    val XP_TEXT = Color.rgb(200, 150, 255)
+    val RESTED_TEXT = Color.rgb(130, 170, 255)
 
     /** A rounded box; [stroke] draws a thin edge in that colour. */
     fun box(context: Context, fill: Int, radiusDp: Int = 12, stroke: Int? = null, strokeDp: Float = 1f) = GradientDrawable().apply {

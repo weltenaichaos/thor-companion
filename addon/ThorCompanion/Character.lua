@@ -2,7 +2,7 @@
 -- The app's Character tab:
 --   TP1|class|classFile|race|xp|xpMax|rested|itemLevel|guild|str,agi,sta,int|armor
 --   TQ1|slot:itemID:itemLevel[:durability%],...      (what you wear)
--- Item names come with the bag item names (TN1). Values the game keeps secret
+-- Item names come with the bag item names (TN2). Values the game keeps secret
 -- (stats in combat) arrive as "?"; the stats are only read out of combat.
 
 local _, ns = ...

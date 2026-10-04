@@ -13,6 +13,10 @@
 -- plain text. During chat lockdown (boss fights) the game hides lines from
 -- addons; those arrive as "(hidden by the game during combat)".
 -- Public channels (General, Trade, ...) are left out unless /thor chat channels on.
+--
+-- Answering: four more keys open the chat box ready for a chat, like pressing
+-- Enter and typing the command yourself: CTRL-SHIFT-F8 "/r " (the last whisper),
+-- F9 "/s ", F10 "/g ", F11 your group ("/p ", or "/raid " or "/i " when in one).
 
 local _, ns = ...
 
@@ -107,7 +111,38 @@ local function whisperButton(n)
     return b
 end
 
--- Binds the whisper keys (out of combat only; otherwise once combat ends).
+-- The answer keys: which chat each opens.
+local ANSWER = {
+    [8] = function() return "/r " end,
+    [9] = function() return "/s " end,
+    [10] = function() return "/g " end,
+    [11] = function()
+        if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then return "/i " end
+        if IsInRaid() then return "/raid " end
+        return "/p "
+    end,
+}
+
+local answerButtons = {}
+local function answerButton(n)
+    local b = answerButtons[n]
+    if not b then
+        b = CreateFrame("Button", "ThorCompanionAnswer" .. n, UIParent)
+        b:RegisterForClicks("AnyUp", "AnyDown")
+        local last = 0
+        b:SetScript("OnClick", function()
+            if GetTime() - last < 0.5 then return end
+            last = GetTime()
+            openedAt = GetTime()
+            local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat
+            open(ANSWER[n]())
+        end)
+        answerButtons[n] = b
+    end
+    return b
+end
+
+-- Binds the whisper and answer keys (out of combat only; otherwise once combat ends).
 function ns.BindWhispers()
     if InCombatLockdown() then whisperPending = true return end
     whisperPending = false
@@ -115,6 +150,9 @@ function ns.BindWhispers()
     if not ns.TapsEnabled() then return end
     for n = 1, WHISPER_SLOTS do
         SetOverrideBindingClick(whisperOwner, true, ns.ActionKeys[ns.WhisperKeys[n]], whisperButton(n):GetName())
+    end
+    for n in pairs(ANSWER) do
+        SetOverrideBindingClick(whisperOwner, true, ns.ActionKeys[ns.ChatKeys[n]], answerButton(n):GetName())
     end
 end
 

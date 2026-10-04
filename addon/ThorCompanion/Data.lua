@@ -4,10 +4,12 @@
 --   TS1|name|level|copper|mapID|x|y|facing                  (small, changes while walking)
 --   TB1|free/total|itemID:count:key,itemID:count:key,...    (the bags)
 --   (key: the slot's tap key, an index into ns.ActionKeys; left out when unbound)
---   TN1|itemID,quality,name<newline>itemID,quality,name...   (names of bag items, a page at a time)
+--   TN2|itemID<tab>quality<tab>itemLevel<tab>requiredLevel<tab>sellPrice<tab>type<tab>name<newline>...
+--                                                             (names and details of bag and worn items, a page at a time)
 --   TH1|...                                                   (new chat lines, see Chat.lua)
 --   TM1|...                                                   (places on the zone map, see Map.lua)
 --   TP1|... and TQ1|...                                       (character and gear, see Character.lua)
+--   TL1|...                                                   (quest log and last kill, see Quests.lua)
 -- and, for a few seconds after their keys, TW1 (zone picture, Map.lua) and TI1 (item icons, Icons.lua).
 -- The app keeps the names it has seen. State and bags are sent again every five
 -- minutes (names too), for an app that started after the game.
@@ -74,10 +76,20 @@ local function bags()
     return "TB1|" .. free .. "/" .. total .. "|" .. list
 end
 
-local function itemName(id)
+-- Name and details of an item, or nil until the game has loaded it (it arrives a moment later).
+local function itemEntry(id)
     local name = C_Item.GetItemNameByID(id)
-    if not name then C_Item.RequestLoadItemDataByID(id) end  -- arrives a moment later
-    return name
+    if not name then C_Item.RequestLoadItemDataByID(id) return nil end
+    local info = C_Item.GetItemInfo or GetItemInfo
+    local ok, _, _, quality, _, required, itemType, subType, _, _, _, price = pcall(info, id)
+    if not ok then quality, required, itemType, subType, price = nil, nil, nil, nil, nil end
+    local okLevel, level = pcall(C_Item.GetDetailedItemLevelInfo, id)
+    if not okLevel then level = nil end
+    local kind = itemType or ""
+    if subType and subType ~= "" and subType ~= itemType then kind = kind .. " / " .. subType end
+    quality = quality or bagQuality[id] or C_Item.GetItemQualityByID(id) or 1
+    local function clean(s) return (tostring(s or ""):gsub("[\t\n]", " ")) end
+    return table.concat({ id, quality, level or 0, required or 0, price or 0, clean(kind), clean(name) }, "\t")
 end
 
 -- Each name is sent twice (so the app surely sees it), then left out until the
@@ -99,10 +111,8 @@ local function namesPayload(peek)
     for _, id in ipairs(ns.EquippedIDs()) do all[#all + 1] = id end
     for _, id in ipairs(all) do
         if (sentCount[id] or 0) < SENDS then
-            local name = itemName(id)
-            if name then
-                local q = bagQuality[id] or C_Item.GetItemQualityByID(id) or 1
-                local entry = id .. "," .. q .. "," .. (name:gsub("\n", " "))
+            local entry = itemEntry(id)
+            if entry then
                 if used + #entry + 1 > room then break end
                 parts[#parts + 1] = entry
                 ids[#ids + 1] = id
@@ -114,7 +124,7 @@ local function namesPayload(peek)
     if not peek then
         for _, id in ipairs(ids) do sentCount[id] = (sentCount[id] or 0) + 1 end
     end
-    return "TN1|" .. table.concat(parts, "\n")
+    return "TN2|" .. table.concat(parts, "\n")
 end
 
 local chatAgain = false
@@ -136,7 +146,7 @@ local function map()
     return ns.MapPayload()
 end
 
-local kinds = { status, bags, namesPayload, chat, map, ns.CharacterPayload, ns.GearPayload }
+local kinds = { status, bags, namesPayload, chat, map, ns.CharacterPayload, ns.GearPayload, ns.QuestsPayload }
 local lastSent = {}
 local turn = 0
 local statusAt = 0
@@ -209,8 +219,6 @@ f:SetScript("OnEvent", function()
         if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain = {}, true end
         if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
         if ticks % MAP_REFRESH_TICKS == 0 then lastSent[5] = nil end
-        local test = ns.KeyTestPayload and ns.KeyTestPayload()
-        if test then ns.StripWrite(test) lastSent = {} return end
         -- The zone picture is up: say where, so the app can take it.
         local okPicture, picture = pcall(ns.MapPicturePayload)
         if not okPicture then picture = nil end
@@ -276,8 +284,6 @@ SlashCmdList.THORCOMPANION = function(msg)
         ns.SetTaps(msg == "taps on")
         print("|cff66ccffThor Companion|r tap to use " .. (msg == "taps on" and "on" or "off") ..
             (InCombatLockdown() and " (after combat)" or ""))
-    elseif msg == "keytest" then
-        ns.KeyTest()
     elseif msg == "hide" or msg == "show" then
         ThorCompanionDB.hidden = (msg == "hide")
         ns.StripShow(msg == "show")

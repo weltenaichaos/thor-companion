@@ -24,6 +24,12 @@ object ActionKeys {
     /** The key that makes the addon show the item icons for the app to take (Icons.lua). */
     const val ICONS = "CTRL-SHIFT-F12"
 
+    /** Keys that open the game's chat box to answer (Chat.lua): the last whisper, say, guild, your group. */
+    const val ANSWER_WHISPER = "CTRL-SHIFT-F8"
+    const val ANSWER_SAY = "CTRL-SHIFT-F9"
+    const val ANSWER_GUILD = "CTRL-SHIFT-F10"
+    const val ANSWER_GROUP = "CTRL-SHIFT-F11"
+
     /** The key for the addon's 1-based [index], or null. */
     fun forIndex(index: Int): String? = all.getOrNull(index - 1)
 }

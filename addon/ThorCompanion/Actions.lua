@@ -26,8 +26,10 @@ end
 
 -- ALT-SHIFT-F1..F10 open whispers (Chat.lua), ALT-SHIFT-F11 shows the zone
 -- picture (Map.lua), ALT-SHIFT-F12 sends everything again (Data.lua),
--- CTRL-SHIFT-F12 shows the item icons (Icons.lua); bag slots get the other keys.
+-- CTRL-SHIFT-F12 shows the item icons (Icons.lua), CTRL-SHIFT-F8..F11 open the chat
+-- box to answer in a chat (Chat.lua); bag slots get the other keys.
 ns.WhisperKeys = {}
+ns.ChatKeys = {}
 local reserved = {}
 for i, key in ipairs(ns.ActionKeys) do
     local n = tonumber(key:match("^ALT%-SHIFT%-F(%d+)$"))
@@ -35,6 +37,8 @@ for i, key in ipairs(ns.ActionKeys) do
     if n == 11 then ns.PictureKey = i reserved[i] = true end
     if n == 12 then ns.RefreshKey = i reserved[i] = true end
     if key == "CTRL-SHIFT-F12" then ns.IconKey = i reserved[i] = true end
+    local c = tonumber(key:match("^CTRL%-SHIFT%-F(%d+)$"))
+    if c and c >= 8 and c <= 11 then ns.ChatKeys[c] = i reserved[i] = true end
 end
 
 local owner = CreateFrame("Frame")

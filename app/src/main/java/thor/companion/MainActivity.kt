@@ -21,6 +21,8 @@ import thor.companion.strip.ChatLine
 import thor.companion.strip.Gear
 import thor.companion.strip.GearItem
 import thor.companion.strip.ChatLog
+import thor.companion.strip.Cooldowns
+import thor.companion.strip.ItemUse
 import thor.companion.strip.IconPicture
 import thor.companion.strip.ItemNames
 import thor.companion.strip.MapPicture
@@ -263,6 +265,8 @@ class MainActivity : Activity() {
                     message.startsWith("TQ1|") -> Gear.parse(message)?.let { runOnUiThread { onCharacter(character, it) } }
                     message.startsWith("TW1|") -> MapPicture.parse(message)?.let { takeMapPicture(it, message) }
                     message.startsWith("TI1|") -> IconPicture.parse(message)?.let { takeIcons(it, assembler.lastSeq) }
+                    message.startsWith("TU1|") -> ItemUse.parse(message)?.let { runOnUiThread { onUse(it) } }
+                    message.startsWith("TC2|") -> Cooldowns.parse(message)?.let { runOnUiThread { onCooldowns(it) } }
                     message.startsWith("TL1|") -> QuestLog.parse(message)?.let { runOnUiThread { onQuests(it) } }
                     page != null -> {
                         val changed = names.addAll(page)
@@ -304,7 +308,23 @@ class MainActivity : Activity() {
             if (panel == Panel.BAGS) render()
         }
         val parsed = GameState.parse(message, state)
-        say(if (parsed == null) "Connected, but the addon sent something unexpected: ${message.take(80)}" else "Connected")
+        if (parsed != null && message.startsWith("TS1|")) {
+            // Bags kept from before a restart are right when the addon's checksum of its last bags says so.
+            val kept = lastMessages["TB1|"]
+            if (!bagsFresh && parsed.bagHash != null && kept != null && GameState.hash(kept) == parsed.bagHash) {
+                bagsFresh = true
+                if (panel == Panel.BAGS) render()
+            }
+            // The path walked is per game session: a new login or /reload starts it afresh.
+            val prefs = getPreferences(MODE_PRIVATE)
+            if (parsed.session != null && parsed.session != prefs.getString("trailSession", null)) {
+                prefs.edit().putString("trailSession", parsed.session).apply()
+                trail.paths.clear()
+                trailUnsaved = 1
+                saveTrail()
+            }
+        }
+        if (parsed == null) say("Connected, but the addon sent something unexpected: ${message.take(80)}") else connected()
         if (parsed == null || parsed == state) return
         val moved = parsed.copy(x = state?.x, y = state?.y, facing = state?.facing) == state
         state = parsed
@@ -387,7 +407,7 @@ class MainActivity : Activity() {
     }
 
     private fun onCharacter(c: CharacterInfo?, g: List<GearItem>) {
-        say("Connected")
+        connected()
         if (c == character && g == gear) return
         character = c
         gear = g
@@ -395,26 +415,57 @@ class MainActivity : Activity() {
     }
 
     private fun onMap(map: ZoneMap) {
-        say("Connected")
+        connected()
         if (map == zoneMap) return
         zoneMap = map
         if (panel == Panel.MAP) render()
     }
 
     private fun onChat(message: String) {
-        say("Connected")
+        connected()
         if (chat.add(message) == true && panel == Panel.CHAT) render()
     }
 
+    /** Bag items on cooldown: when each is ready again (uptime ms). */
+    private var readyAt: Map<Int, Long> = emptyMap()
+
+    private fun onCooldowns(left: Map<Int, Long>) {
+        connected()
+        val now = SystemClock.uptimeMillis()
+        val next = left.mapValues { now + it.value * 1000 }
+        // The same cooldowns again (a resend) give the same times give or take a second.
+        if (next.keys == readyAt.keys && next.all { (id, t) -> Math.abs(t - (readyAt[id] ?: 0)) < 2000 }) return
+        readyAt = next
+        if (panel == Panel.BAGS) render()
+    }
+
+    private fun cooldownLeft(itemId: Int): Long = ((readyAt[itemId] ?: 0) - SystemClock.uptimeMillis()) / 1000
+
+    /** The last tap on a bag item, until the addon says what came of it. */
+    private var tapped: Pair<Int, String>? = null
+    private var lastUse = -1
+
+    private fun onUse(use: ItemUse) {
+        if (use.n == lastUse) return
+        lastUse = use.n
+        val label = names[use.itemId]?.name ?: tapped?.second ?: "the item"
+        tapped = null
+        say(when (use.result) {
+            "ok" -> "Used $label"
+            "nouse" -> "$label can't be used: it does nothing when used (long-press it for details)"
+            else -> "Couldn't use $label: ${use.result}"
+        })
+    }
+
     private fun onQuests(log: QuestLog) {
-        say("Connected")
+        connected()
         if (log == quests) return
         quests = log
         if (panel == Panel.QUESTS || panel == Panel.CHARACTER) render()
     }
 
     private fun onNames(changed: Boolean) {
-        say("Connected")
+        connected()
         if (changed && (panel == Panel.BAGS || panel == Panel.CHARACTER)) render()
     }
 
@@ -460,8 +511,17 @@ class MainActivity : Activity() {
         }
     }
 
+    /** When the status line last said something other than "Connected", which then stays for a while. */
+    private var saidAt = 0L
+
+    /** Data came in: the dot goes green, and the line says so unless it is still showing something you should read. */
+    private fun connected() {
+        if (SystemClock.uptimeMillis() - saidAt > NOTICE_MS) say("Connected", notice = false) else say(status.text.toString(), notice = false)
+    }
+
     /** The status line, with its dot: green while the game's data comes in, red when it stopped, amber before it ever came. */
-    private fun say(text: String) {
+    private fun say(text: String, notice: Boolean = true) {
+        if (notice) saidAt = SystemClock.uptimeMillis()
         status.text = text
         val since = SystemClock.uptimeMillis() - frameAt
         val colour = when {
@@ -923,7 +983,12 @@ class MainActivity : Activity() {
         return dm.displays.map { it.displayId }.firstOrNull { it != here } ?: 0
     }
 
+    /** Redraws the bags now and then while something there is on cooldown, so the time left counts down. */
+    private val cooldownTick = Runnable { if (panel == Panel.BAGS) render() }
+
     private fun renderBags(s: GameState) {
+        content.removeCallbacks(cooldownTick)
+        if (s.items.any { cooldownLeft(it.itemId) > 0 }) content.postDelayed(cooldownTick, 15_000)
         val head = card().apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         head.addView(line("", GOLD, 18f, bold = true).apply { text = s.copper?.let { coins(it) } ?: "Gold unknown"; setPadding(0, 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
         val free = s.freeSlots; val total = s.totalSlots
@@ -961,6 +1026,18 @@ class MainActivity : Activity() {
                 setTextColor(Color.WHITE)
                 setShadowLayer(3f, 0f, 0f, Color.BLACK)
             }, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply { marginEnd = dp(1) })
+            val wait = cooldownLeft(item.itemId)
+            if (wait > 0) {
+                // On cooldown: the icon darkened with the time left on it, like the game's own.
+                pic.addView(TextView(this).apply {
+                    text = Cooldowns.left(wait).replace(" min", "m").replace(" h", "h").replace(" s", "s").substringBefore(' ')
+                    textSize = 11f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    setTextColor(Color.WHITE)
+                    background = Theme.box(context, Color.argb(170, 0, 0, 0), 6)
+                }, FrameLayout.LayoutParams(-1, -1))
+            }
             tile.addView(pic, LinearLayout.LayoutParams(dp(40), dp(40)))
             tile.addView(TextView(this).apply {
                 text = known?.name ?: "#${item.itemId}"
@@ -984,9 +1061,25 @@ class MainActivity : Activity() {
                     say("$label has no tap key yet. Is the new addon loaded? /thor taps in game shows the keys.")
                     return@setOnClickListener
                 }
+                val wait = cooldownLeft(item.itemId)
+                if (wait > 0) {
+                    say("$label is on cooldown: ready in ${Cooldowns.left(wait)}")
+                    return@setOnClickListener
+                }
                 (v.background as GradientDrawable).setColor(PRESSED)
                 v.postDelayed({ (v.background as GradientDrawable).setColor(SURFACE) }, 250)
-                pressKey(key, onDone = { say("Sent $key for $label") }) { err ->
+                val tap = item.itemId to label
+                tapped = tap
+                pressKey(key, onDone = {
+                    say("Using $label…")
+                    // The addon answers within a second or so; silence means the key didn't reach the item.
+                    content.postDelayed({
+                        if (tapped === tap) {
+                            tapped = null
+                            say("The game didn't react to $label's key ($key). Is the addon v38 loaded, and tap-to-use on (/thor taps)?")
+                        }
+                    }, 3000)
+                }) { err ->
                     say("Couldn't use $label: $err")
                 }
             }
@@ -1130,6 +1223,8 @@ class MainActivity : Activity() {
 
     private companion object {
         /** Message kinds kept across restarts. */
+        /** How long a message in the status line stays before "Connected" replaces it. */
+        const val NOTICE_MS = 6000L
         val KEPT = setOf("TS1|", "TB1|", "TM1|", "TP1|", "TQ1|", "TL1|")
         /** The paper doll's slots, left column then right, as Character.lua sends them. */
         val GEAR_SLOTS = listOf(1, 2, 3, 15, 5, 4, 19, 9, 10, 6, 7, 8, 11, 12, 13, 14, 16, 17)

@@ -55,6 +55,44 @@ local function aim(b, bag, slot)
     b:SetAttribute("item", info and (bag .. " " .. slot) or nil)
 end
 
+-- What came of a tap, for the app (TU1|n|itemID|result): "ok", "nouse" for an
+-- item that does nothing when used (cloth, junk), or the game's error ("Item is
+-- not ready yet", "You can't do that while moving", ...). The key arriving is
+-- noted after the secure button ran; the error, if any, comes right after it.
+local useN, useItem, useAt, useResult = 0, nil, 0, nil
+local useReported = true
+
+local function noteUse(b)
+    if GetTime() - useAt < 0.5 then return end  -- the key's press and release
+    local bag, slot = (b:GetAttribute("item") or ""):match("^(%d+) (%d+)$")
+    local id = bag and C_Container.GetContainerItemID(tonumber(bag), tonumber(slot))
+    if not id then return end
+    useN, useItem, useAt, useResult, useReported = useN + 1, id, GetTime(), nil, false
+    -- Nothing to use: no spell, not worn, nothing to open or read, starts no quest.
+    local info = C_Container.GetContainerItemInfo(tonumber(bag), tonumber(slot)) or {}
+    local quest = C_Container.GetContainerItemQuestInfo and C_Container.GetContainerItemQuestInfo(tonumber(bag), tonumber(slot)) or {}
+    local spell = C_Item.GetItemSpell and C_Item.GetItemSpell(id)
+    local equip = C_Item.IsEquippableItem and C_Item.IsEquippableItem(id)
+    if not (spell or equip or info.hasLoot or info.isReadable or quest.questID or quest.isQuestItem) then useResult = "nouse" end
+end
+
+local errors = CreateFrame("Frame")
+errors:RegisterEvent("UI_ERROR_MESSAGE")
+errors:SetScript("OnEvent", function(_, _, _, message)
+    if useReported or GetTime() - useAt > 1 then return end
+    if message and not (issecretvalue and issecretvalue(message)) then
+        useResult = tostring(message):gsub("|", "/")
+    end
+end)
+
+function ns.UsePayload()
+    if useReported then return nil end
+    -- Errors come at once; without one by then, the item was used.
+    if not useResult and GetTime() - useAt < 0.6 then return nil end
+    useReported = true
+    return "TU1|" .. useN .. "|" .. useItem .. "|" .. (useResult or "ok")
+end
+
 local function button(i)
     local b = buttons[i]
     if not b then
@@ -65,6 +103,7 @@ local function button(i)
         -- button was made, and then ignores the edge that arrives (seen on the Thor).
         b:SetAttribute("useOnKeyDown", false)
         b:RegisterForClicks("AnyUp", "AnyDown")
+        b:HookScript("OnClick", noteUse)
         buttons[i] = b
     end
     return b

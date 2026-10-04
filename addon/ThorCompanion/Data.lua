@@ -1,8 +1,12 @@
 -- Data.lua
 -- Collects non-secret, out-of-combat-safe state and hands it to the strip.
 -- Several kinds of message, checked every half second, each sent only when it changed:
---   TS1|name|level|copper|mapID|x|y|facing                  (small, changes while walking)
+--   TS1|name|level|copper|mapID|x|y|facing|session|bagHash  (small, changes while walking)
+--   (session: changes with every login or /reload; bagHash: a checksum of the last TB1, so
+--   an app that kept the bags from before knows at once whether they are still right)
 --   TB1|free/total|itemID:count:key,itemID:count:key,...    (the bags)
+--   TC2|now|itemID:readyAt,...                                (bag items on cooldown, in GetTime() seconds)
+--   TU1|n|itemID|result                                       (what came of tapping a bag item, see Actions.lua)
 --   (key: the slot's tap key, an index into ns.ActionKeys; left out when unbound)
 --   TN2|itemID<tab>quality<tab>itemLevel<tab>requiredLevel<tab>sellPrice<tab>type<tab>name<newline>...
 --                                                             (names and details of bag and worn items, a page at a time)
@@ -55,6 +59,16 @@ function ns.BagIDs()
     return bagIDs
 end
 
+local session = tostring(time())
+local bagHash = 0
+
+-- The same checksum the app works out (GameState.hash): over the bytes, h = (h * 31 + b) % 65536.
+local function checksum(s)
+    local h = 0
+    for i = 1, #s do h = (h * 31 + s:byte(i)) % 65536 end
+    return h
+end
+
 local function status()
     local name = plain(UnitName("player")) or "?"
     local level = plain(UnitLevel("player")) or 0
@@ -67,13 +81,15 @@ local function status()
     -- Facing in radians (0 = north, counter-clockwise), in steps of about 6 degrees.
     local facing = GetPlayerFacing and plain(GetPlayerFacing())
     facing = type(facing) == "number" and string.format("%.1f", facing) or ""
-    return string.format("TS1|%s|%s|%d|%d|%.4f|%.4f|%s", tostring(name), tostring(level),
-        GetMoney() or 0, mapID or 0, x or 0, y or 0, facing)
+    return string.format("TS1|%s|%s|%d|%d|%.4f|%.4f|%s|%s|%d", tostring(name), tostring(level),
+        GetMoney() or 0, mapID or 0, x or 0, y or 0, facing, session, bagHash)
 end
 
 local function bags()
     local free, total, list = bagSummary(ns.StripCapacity() - 16)
-    return "TB1|" .. free .. "/" .. total .. "|" .. list
+    local p = "TB1|" .. free .. "/" .. total .. "|" .. list
+    bagHash = checksum(p)
+    return p
 end
 
 -- Name and details of an item, or nil until the game has loaded it (it arrives a moment later).
@@ -97,7 +113,7 @@ end
 local SENDS = 2
 local REFRESH_TICKS = 600       -- five minutes: state and bags again, for an app started late
 local NAMES_REFRESH_TICKS = 600  -- five minutes: names again, for an app that was reinstalled
-local MAP_REFRESH_TICKS = 120   -- one minute: the map again, so a restarted app is soon up to date
+local MAP_REFRESH_TICKS = 120   -- one minute: map and bags again, so a restarted app is soon up to date
 local MOVE_SECONDS = 0.7         -- while walking, the position is sent at most this often
 local sentCount = {}
 
@@ -139,24 +155,73 @@ end
 -- at once, otherwise at most every MAP_SECONDS.
 local MAP_SECONDS = 10
 local mapAt, mapID = -100, nil
+local mapUrgent, mapForce = false, false
 local function map()
     -- Not even built while it could not be sent anyway.
     local id = C_Map.GetBestMapForUnit("player")
-    if id and tostring(id) == mapID and GetTime() - mapAt < MAP_SECONDS then return nil end
+    local force = mapForce
+    mapForce = false
+    if id and tostring(id) == mapID and GetTime() - mapAt < MAP_SECONDS and not force then return nil end
     return ns.MapPayload()
 end
 
-local kinds = { status, bags, namesPayload, chat, map, ns.CharacterPayload, ns.GearPayload, ns.QuestsPayload }
+-- Bag items on cooldown, with when they are ready (in GetTime() seconds, which the
+-- app turns into minutes left). Only sent again when that list changes; in combat
+-- the game may keep cooldowns secret, then the last list stays.
+local cooldownKey, cooldownPayload = nil, nil
+local function cooldowns()
+    local out, seen = {}, {}
+    local now = GetTime()
+    for bag = 0, 4 do
+        for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
+            local id = C_Container.GetContainerItemID(bag, slot)
+            if id and not seen[id] then
+                local start, duration = C_Container.GetContainerItemCooldown(bag, slot)
+                if issecretvalue and (issecretvalue(start) or issecretvalue(duration)) then return cooldownPayload end
+                if start and duration and start > 0 and duration > 1.5 and start + duration > now + 1 then
+                    seen[id] = true
+                    out[#out + 1] = id .. ":" .. math.floor(start + duration + 0.5)
+                end
+            end
+        end
+    end
+    local key = table.concat(out, ",")
+    if key ~= cooldownKey then
+        cooldownKey = key
+        cooldownPayload = "TC2|" .. math.floor(now + 0.5) .. "|" .. key
+    end
+    return cooldownPayload
+end
+
+local kinds = { status, bags, namesPayload, chat, map, ns.CharacterPayload, ns.GearPayload, ns.QuestsPayload, cooldowns }
 local lastSent = {}
 local turn = 0
 local statusAt = 0
 
 -- The status line without its position and facing, to tell walking from other changes.
 local function withoutPosition(p)
-    return p and (p:match("^(.*)|[^|]*|[^|]*|[^|]*$") or p)
+    if not p then return nil end
+    local f = { strsplit("|", p) }
+    f[6], f[7], f[8] = "", "", ""
+    return table.concat(f, "|")
 end
 
+-- A quest taken, done or handed in, or a new zone, changes the map's places: then
+-- the map goes first, not after the other kinds' turns.
+local mapEvents = CreateFrame("Frame")
+for _, e in ipairs({ "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN", "ZONE_CHANGED_NEW_AREA", "ZONE_CHANGED" }) do
+    mapEvents:RegisterEvent(e)
+end
+mapEvents:SetScript("OnEvent", function() mapUrgent = true end)
+
+local showingTurn
 local function nextMessage()
+    local id = C_Map.GetBestMapForUnit("player")
+    if mapUrgent or (id and tostring(id) ~= mapID) then
+        turn = 4  -- the map (5) is next
+        mapForce = mapUrgent
+    end
+    mapUrgent = false
     for _ = 1, #kinds do
         turn = turn % #kinds + 1
         local ok, p = pcall(kinds[turn])
@@ -170,6 +235,7 @@ local function nextMessage()
             if turn == 1 then statusAt = GetTime() end
             if turn == 5 then mapAt, mapID = GetTime(), p:match("^TM1|(%d+)") end
             lastSent[turn] = p
+            showingTurn = turn
             return p
         end
     end
@@ -218,7 +284,14 @@ f:SetScript("OnEvent", function()
         ticks = ticks + 1
         if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain = {}, true end
         if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
-        if ticks % MAP_REFRESH_TICKS == 0 then lastSent[5] = nil end
+        if ticks % MAP_REFRESH_TICKS == 0 then lastSent[2], lastSent[5] = nil, nil end
+        -- What came of a tap goes out at once; whatever it cut short is sent again.
+        local okUse, use = pcall(ns.UsePayload)
+        if okUse and use then
+            if showingTurn then lastSent[showingTurn] = nil showingTurn = nil end
+            ns.StripWrite(use)
+            return
+        end
         -- The zone picture is up: say where, so the app can take it.
         local okPicture, picture = pcall(ns.MapPicturePayload)
         if not okPicture then picture = nil end

@@ -12,9 +12,6 @@ object ActionKeys {
         mods.flatMap { mod -> (1..12).map { "$mod-F$it" } }.filter { it != "ALT-F4" } +
             mods.flatMap { mod -> (0..9).map { "$mod-NUMPAD$it" } }
 
-    /** The key that opens a whisper to whoever has whisper slot [slot] (1..10) in the addon. */
-    fun forWhisper(slot: Int): String? = "ALT-SHIFT-F$slot".takeIf { slot in 1..10 }
-
     /** The key that makes the addon show the zone's map art for the app to take (Map.lua). */
     const val PICTURE = "ALT-SHIFT-F11"
 
@@ -24,11 +21,8 @@ object ActionKeys {
     /** The key that makes the addon show the item icons for the app to take (Icons.lua). */
     const val ICONS = "CTRL-SHIFT-F12"
 
-    /** Keys that open the game's chat box to answer (Chat.lua): the last whisper, say, guild, your group. */
-    const val ANSWER_WHISPER = "CTRL-SHIFT-F8"
-    const val ANSWER_SAY = "CTRL-SHIFT-F9"
-    const val ANSWER_GUILD = "CTRL-SHIFT-F10"
-    const val ANSWER_GROUP = "CTRL-SHIFT-F11"
+    /** The game's own Open Chat key (bound by Chat.lua, like Enter); the app then types "/g ", "/w Name " and so on. */
+    const val OPEN_CHAT = "CTRL-SHIFT-F8"
 
     /** The key for the addon's 1-based [index], or null. */
     fun forIndex(index: Int): String? = all.getOrNull(index - 1)

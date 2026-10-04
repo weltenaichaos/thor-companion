@@ -24,10 +24,10 @@ do
     end
 end
 
--- ALT-SHIFT-F1..F10 open whispers (Chat.lua), ALT-SHIFT-F11 shows the zone
+-- ALT-SHIFT-F1..F10 are kept free (they used to open whispers), ALT-SHIFT-F11 shows the zone
 -- picture (Map.lua), ALT-SHIFT-F12 sends everything again (Data.lua),
--- CTRL-SHIFT-F12 shows the item icons (Icons.lua), CTRL-SHIFT-F8..F11 open the chat
--- box to answer in a chat (Chat.lua); bag slots get the other keys.
+-- CTRL-SHIFT-F12 shows the item icons (Icons.lua), CTRL-SHIFT-F8 opens the chat box
+-- (Chat.lua; F9..F11 kept free); bag slots get the other keys.
 ns.WhisperKeys = {}
 ns.ChatKeys = {}
 local reserved = {}
@@ -169,10 +169,6 @@ owner:RegisterEvent("ADDON_ACTION_FORBIDDEN")
 owner:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
         local addon, fn = ...
-        -- Opening the chat box for a whisper runs the game's own controller code,
-        -- which then may not pick a new interact target. The whisper works, so
-        -- that one is not worth a notice (seen on the Thor).
-        if GetTime() - ns.WhisperOpenedAt() < 1 then return end
         if addon == "ThorCompanion" then print(P .. "the game blocked " .. tostring(fn) .. " (" .. event .. ")") end
         return
     end

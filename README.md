@@ -70,14 +70,13 @@ when the game starts. In game:
   `off` (the default) leaves them out. Say, yell, emotes, whispers, party, raid, instance,
   guild and system lines are always sent. During boss fights the game hides chat from
   addons, so those lines show as hidden.
-  Tapping a line in the Chat tab starts a whisper to whoever wrote it: the app presses one
-  key (ALT-SHIFT-F1..F10, one per recent sender) and the game opens the chat box with
-  "/w Name "; you type and send the message in the game. The Chat tab has its own tabs
-  (All, Group, Whispers, Guild, General). A button under each (or a tap on a line, to
-  whisper its sender) opens a text field with the keyboard on the bottom screen; Send
-  presses the key that opens the game's chat box for that chat (CTRL-SHIFT-F8 "/r ", F9
-  "/s ", F10 "/g ", F11 your group, ALT-SHIFT-F1..F10 a whisper), waits until the addon
-  says the box is open (TE1), types the message into it and presses Enter.
+  The Chat tab has its own tabs (All, Group, Whispers, Guild, General). A button under
+  each, or a tap on a line (to whisper its sender), opens a text field with the keyboard
+  on the bottom screen. Send presses CTRL-SHIFT-F8, which the addon binds to the game's
+  own Open Chat command (like Enter), waits until the addon says the box is open (TE1),
+  types "/r ", "/s ", "/g ", your group's command or "/w Name " with the message and
+  presses Enter. The addon never opens the chat box itself: the game blocks addons that
+  do (the "blocked from an action only available to the Blizzard UI" popup).
 - ALT-SHIFT-F12 makes the addon send everything again; the app's "Load from the game"
   button presses it (shown while the bags or character haven't arrived, for example right
   after installing the app). The app also keeps the last bags, character and map across
@@ -85,7 +84,7 @@ when the game starts. In game:
 - `/thor taps off` and `/thor taps on` turn tap-to-use off and on (default on). With it on,
   every bag slot has its own key (CTRL-F1 and up), bound out of combat, and tapping an
   item in the app's Bags tab presses that one key, which uses the item. It also turns the
-  whisper keys off and on.
+  chat key off and on.
 **App:** each build on GitHub Actions uploads a debug APK
 (`thor-companion-debug-apk`). Install it and open it on the bottom screen.
 

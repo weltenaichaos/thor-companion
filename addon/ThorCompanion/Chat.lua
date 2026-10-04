@@ -5,18 +5,14 @@
 -- few again). <session> changes with every login or /reload, so the app knows
 -- when the line numbers start over. <sender> is Name-Realm as the game gives it.
 --
--- Tap to whisper: the last WHISPER_SLOTS people who wrote each get a key
--- (ALT-SHIFT-F1..F10) that opens the chat box with "/w Name ", so one tap on
--- their line in the app is one key press that starts a whisper; you type and
--- send it yourself. <whisper names> lists who has which key right now, comma
--- separated, so the app only offers the tap for names it knows the key of. Colour codes, links and icons are reduced to
+-- <whisper names> lists the last people who wrote, comma separated. Colour codes, links and icons are reduced to
 -- plain text. During chat lockdown (boss fights) the game hides lines from
 -- addons; those arrive as "(hidden by the game during combat)".
 -- Public channels (General, Trade, ...) are left out unless /thor chat channels on.
 --
--- Answering: four more keys open the chat box ready for a chat, like pressing
--- Enter and typing the command yourself: CTRL-SHIFT-F8 "/r " (the last whisper),
--- F9 "/s ", F10 "/g ", F11 your group ("/p ", or "/raid " or "/i " when in one).
+-- Answering: CTRL-SHIFT-F8 is the game's own Open Chat key (like Enter). The app
+-- presses it, waits for TE1 to say the box is open, then types "/w Name ", "/r ",
+-- "/s ", "/g " or your group's command with your message and presses Enter.
 
 local _, ns = ...
 
@@ -56,12 +52,12 @@ local function plain(s)
     return s
 end
 
--- Whisper keys: slot n is ALT-SHIFT-F<n>; a new name takes the slot used longest ago.
+-- Who wrote last: the app offers a whisper to these names (the last WHISPER_SLOTS).
 local whisperName = {}   -- slot -> Name-Realm
 local whisperUsed = {}   -- slot -> counter when last written by that name
 local whisperClock = 0
-local whisperOwner = CreateFrame("Frame")
-local whisperPending = false
+local chatOwner = CreateFrame("Frame")
+local chatPending = false
 
 local function remember(name)
     if name == "" or name == "?" or name == UnitName("player") then return end
@@ -81,18 +77,12 @@ local function remember(name)
     whisperUsed[slot] = whisperClock
 end
 
-local openedAt = -100
-function ns.WhisperOpenedAt() return openedAt end
-
--- Whether the chat box really opened after a whisper or answer key, for the app:
---   TE1|n|open   or   TE1|n|closed
--- The app types your message only after "open", so no letter ever reaches the
--- game as a key binding (W would walk) when the box did not open.
-local openN, openPending = 0, false
-
-local function noteOpen()
-    openN, openPending = openN + 1, true
-end
+-- Whether the chat box opened, for the app:
+--   TE1|n|open|<group>   or   TE1|n|closed|<group>
+-- n counts the times the box got the cursor; <group> is the command for your
+-- group right now ("/p ", "/raid " or "/i "). The app types your message only
+-- after "open", so no letter ever reaches the game as a key binding (W would walk).
+local openN, openPending, openedAt = 0, false, -100
 
 local function activeEditBox()
     local get = (ChatFrameUtil and ChatFrameUtil.GetActiveWindow) or ChatEdit_GetActiveWindow
@@ -100,91 +90,48 @@ local function activeEditBox()
     return eb and eb:IsShown() and eb:HasFocus()
 end
 
+local function groupCommand()
+    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then return "/i " end
+    if IsInRaid() then return "/raid " end
+    return "/p "
+end
+
 function ns.ChatOpenPayload()
     if not openPending or GetTime() - openedAt < 0.1 then return nil end
-    local open = activeEditBox()
-    if not open and GetTime() - openedAt < 1.5 then return nil end
     openPending = false
-    return "TE1|" .. openN .. "|" .. (open and "open" or "closed")
+    return "TE1|" .. openN .. "|" .. (activeEditBox() and "open" or "closed") .. "|" .. groupCommand()
 end
 
-local function openWhisper(name)
-    openedAt = GetTime()
-    local tell = (ChatFrameUtil and ChatFrameUtil.SendTell) or ChatFrame_SendTell
-    if tell then return tell(name) end
-    local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat
-    open("/w " .. name .. " ")
-end
-
--- Plain buttons (whispering needs no secure code); the key may arrive as a
--- press and a release, the whisper opens on the first of them.
-local whisperButtons = {}
-local function whisperButton(n)
-    local b = whisperButtons[n]
-    if not b then
-        b = CreateFrame("Button", "ThorCompanionWhisper" .. n, UIParent)
-        b:RegisterForClicks("AnyUp", "AnyDown")
-        local last = 0
-        b:SetScript("OnClick", function()
-            if GetTime() - last < 0.5 then return end
-            last = GetTime()
-            if whisperName[n] then noteOpen() openWhisper(whisperName[n]) end
-        end)
-        whisperButtons[n] = b
+-- Only watched, never called: an addon that opens the chat box itself makes the
+-- game block its controller code (the "blocked from an action" popup).
+local hooked = {}
+local function hookEditBoxes()
+    for i = 1, (NUM_CHAT_WINDOWS or 10) do
+        local eb = _G["ChatFrame" .. i .. "EditBox"]
+        if eb and not hooked[eb] then
+            hooked[eb] = true
+            eb:HookScript("OnEditFocusGained", function()
+                openN, openPending, openedAt = openN + 1, true, GetTime()
+            end)
+        end
     end
-    return b
 end
 
--- The answer keys: which chat each opens.
-local ANSWER = {
-    [8] = function() return "/r " end,
-    [9] = function() return "/s " end,
-    [10] = function() return "/g " end,
-    [11] = function()
-        if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then return "/i " end
-        if IsInRaid() then return "/raid " end
-        return "/p "
-    end,
-}
-
-local answerButtons = {}
-local function answerButton(n)
-    local b = answerButtons[n]
-    if not b then
-        b = CreateFrame("Button", "ThorCompanionAnswer" .. n, UIParent)
-        b:RegisterForClicks("AnyUp", "AnyDown")
-        local last = 0
-        b:SetScript("OnClick", function()
-            if GetTime() - last < 0.5 then return end
-            last = GetTime()
-            openedAt = GetTime()
-            noteOpen()
-            local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat
-            open(ANSWER[n]())
-        end)
-        answerButtons[n] = b
-    end
-    return b
-end
-
--- Binds the whisper and answer keys (out of combat only; otherwise once combat ends).
+-- The chat key (CTRL-SHIFT-F8) is bound to the game's own "Open Chat" command,
+-- exactly like Enter; the app then types "/g ", "/w Name " and so on with your text.
 function ns.BindWhispers()
-    if InCombatLockdown() then whisperPending = true return end
-    whisperPending = false
-    ClearOverrideBindings(whisperOwner)
+    if InCombatLockdown() then chatPending = true return end
+    chatPending = false
+    ClearOverrideBindings(chatOwner)
     if not ns.TapsEnabled() then return end
-    for n = 1, WHISPER_SLOTS do
-        SetOverrideBindingClick(whisperOwner, true, ns.ActionKeys[ns.WhisperKeys[n]], whisperButton(n):GetName())
-    end
-    for n in pairs(ANSWER) do
-        SetOverrideBindingClick(whisperOwner, true, ns.ActionKeys[ns.ChatKeys[n]], answerButton(n):GetName())
-    end
+    SetOverrideBinding(chatOwner, true, ns.ActionKeys[ns.ChatKeys[8]], "OPENCHAT")
 end
 
-whisperOwner:RegisterEvent("PLAYER_LOGIN")
-whisperOwner:RegisterEvent("PLAYER_REGEN_ENABLED")
-whisperOwner:SetScript("OnEvent", function(_, event)
-    if event == "PLAYER_LOGIN" or whisperPending then ns.BindWhispers() end
+chatOwner:RegisterEvent("PLAYER_LOGIN")
+chatOwner:RegisterEvent("PLAYER_REGEN_ENABLED")
+chatOwner:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_LOGIN" then hookEditBoxes() end
+    if event == "PLAYER_LOGIN" or chatPending then ns.BindWhispers() end
 end)
 
 local function add(kind, sender, channel, text)

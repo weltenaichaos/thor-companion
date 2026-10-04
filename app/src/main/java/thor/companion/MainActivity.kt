@@ -267,7 +267,7 @@ class MainActivity : Activity() {
                     message.startsWith("TW1|") -> MapPicture.parse(message)?.let { takeMapPicture(it, message) }
                     message.startsWith("TI1|") -> IconPicture.parse(message)?.let { takeIcons(it, assembler.lastSeq) }
                     message.startsWith("TE1|") -> message.split('|').let { f ->
-                        f.getOrNull(1)?.toIntOrNull()?.let { n -> chatBox = n to (f.getOrNull(2) == "open") }
+                        f.getOrNull(1)?.toIntOrNull()?.let { n -> chatBox = Triple(n, f.getOrNull(2) == "open", f.getOrNull(3).orEmpty()) }
                     }
                     message.startsWith("TU1|") -> ItemUse.parse(message)?.let { runOnUiThread { onUse(it) } }
                     message.startsWith("TC2|") -> Cooldowns.parse(message)?.let { runOnUiThread { onCooldowns(it) } }
@@ -745,15 +745,15 @@ class MainActivity : Activity() {
         if (composing != null) return
         // Answer: type here, with the keyboard on this screen; Send opens the game's chat box and puts it in.
         val answers = when (chatTab) {
-            ChatTab.ALL -> listOf("Group" to ActionKeys.ANSWER_GROUP, "Guild" to ActionKeys.ANSWER_GUILD, "Say" to ActionKeys.ANSWER_SAY, "Reply" to ActionKeys.ANSWER_WHISPER)
-            ChatTab.GROUP -> listOf("Write to your group" to ActionKeys.ANSWER_GROUP)
-            ChatTab.WHISPERS -> listOf("Reply to the last whisper" to ActionKeys.ANSWER_WHISPER)
-            ChatTab.GUILD -> listOf("Write to your guild" to ActionKeys.ANSWER_GUILD)
-            ChatTab.GENERAL -> listOf("Say something" to ActionKeys.ANSWER_SAY)
+            ChatTab.ALL -> listOf("Group" to GROUP, "Guild" to "/g ", "Say" to "/s ", "Reply" to "/r ")
+            ChatTab.GROUP -> listOf("Write to your group" to GROUP)
+            ChatTab.WHISPERS -> listOf("Reply to the last whisper" to "/r ")
+            ChatTab.GUILD -> listOf("Write to your guild" to "/g ")
+            ChatTab.GENERAL -> listOf("Say something" to "/s ")
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(6), 0, 0) }
-        for ((label, key) in answers) {
-            row.addView(chip(label) { compose(label, key) }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(4) })
+        for ((label, command) in answers) {
+            row.addView(chip(label) { compose(label, command) }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(4) })
         }
         footer.addView(row)
     }
@@ -953,25 +953,28 @@ class MainActivity : Activity() {
         if (who.isNotEmpty()) add(who, android.text.style.StyleSpan(Typeface.BOLD))
         add(l.text)
         val view = line("", colour, 15f).apply { this.text = text; setPadding(0, dp(3), 0, dp(3)) }
-        // Tap a line: one key that opens the whisper box for its sender in the game.
-        val key = chat.whisperSlot(l.sender)?.let { ActionKeys.forWhisper(it) } ?: return view
-        view.setOnClickListener { compose("Whisper to $n", key) }
+        // Tap a line: write a whisper to its sender.
+        if (l.sender.isEmpty() || l.sender == "?" || l.kind == "system") return view
+        view.setOnClickListener { compose("Whisper to $n", "/w ${l.sender} ") }
         return view
     }
 
-    /** The message being written, and to whom: (label, the key that opens the game's chat box for it). */
+    /** The message being written, and to whom: (label, the chat command it starts with). */
     private var composing: Pair<String, String>? = null
+
+    /** Stands for your group's command, which the addon says when the chat box opens ("/p ", "/raid " or "/i "). */
+    private val GROUP = "group"
 
     /**
      * A text field with this screen's keyboard, to write a chat message. While it is
      * open the app takes the keyboard (the game gets it back after); Send then
-     * presses the one key that opens the game's chat box for that chat, waits until
-     * the addon says the box is open, types the message there and presses Enter:
+     * presses the game's own Open Chat key (like Enter), waits until the addon says
+     * the box is open, types the chat command and the message and presses Enter:
      * one tap on Send is one message, as if you had typed it in the game.
      */
-    private fun compose(label: String, key: String) {
+    private fun compose(label: String, command: String) {
         if (panel != Panel.CHAT) show(Panel.CHAT)
-        composing = label to key
+        composing = label to command
         footer.removeAllViews()
         val field = android.widget.EditText(this).apply {
             hint = "$label…"
@@ -987,7 +990,7 @@ class MainActivity : Activity() {
         fun send() {
             val text = field.text.toString().trim()
             closeCompose()
-            if (text.isNotEmpty()) sendChat(label, key, text)
+            if (text.isNotEmpty()) sendChat(label, command, text)
         }
         field.setOnEditorActionListener { _, action, _ ->
             if (action == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) { send(); true } else false
@@ -1015,16 +1018,16 @@ class MainActivity : Activity() {
         if (panel == Panel.CHAT) render() else footer.removeAllViews()
     }
 
-    /** The addon's last word on the chat box: its count, and whether it opened. */
-    @Volatile private var chatBox: Pair<Int, Boolean>? = null
+    /** The addon's last word on the chat box: its count, whether it opened, and your group's command. */
+    @Volatile private var chatBox: Triple<Int, Boolean, String>? = null
 
-    private fun sendChat(label: String, key: String, text: String) {
+    private fun sendChat(label: String, command: String, text: String) {
         val target = gameDisplay()
         val before = chatBox?.first
         lastKeyAt = SystemClock.uptimeMillis()
         say("$label: sending…")
         keys.execute {
-            val err = KeySender.send(this, target, key)
+            val err = KeySender.send(this, target, ActionKeys.OPEN_CHAT)
             if (err != null && !err.startsWith("(focus")) return@execute runOnUiThread { say("$label not sent: $err") }
             // Wait for the addon to see the box open; never type into the game without it.
             val until = SystemClock.uptimeMillis() + 3000
@@ -1034,9 +1037,10 @@ class MainActivity : Activity() {
             }
             val box = chatBox
             if (box == null || box.first == before || !box.second) {
-                return@execute runOnUiThread { say("$label not sent: the game's chat box didn't open (in combat or a menu open?)") }
+                return@execute runOnUiThread { say("$label not sent: the game's chat box didn't open (a game menu open, or the addon older than v40?)") }
             }
-            val typed = KeySender.type(this, target, text)
+            val prefix = if (command == GROUP) box.third.ifEmpty { "/p " } else command
+            val typed = KeySender.type(this, target, prefix + text)
             if (typed != null && !typed.startsWith("(focus")) return@execute runOnUiThread { say("$label not sent: $typed") }
             KeySender.send(this, target, "ENTER")
             runOnUiThread { say("$label: sent") }

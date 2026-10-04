@@ -84,6 +84,30 @@ end
 local openedAt = -100
 function ns.WhisperOpenedAt() return openedAt end
 
+-- Whether the chat box really opened after a whisper or answer key, for the app:
+--   TE1|n|open   or   TE1|n|closed
+-- The app types your message only after "open", so no letter ever reaches the
+-- game as a key binding (W would walk) when the box did not open.
+local openN, openPending = 0, false
+
+local function noteOpen()
+    openN, openPending = openN + 1, true
+end
+
+local function activeEditBox()
+    local get = (ChatFrameUtil and ChatFrameUtil.GetActiveWindow) or ChatEdit_GetActiveWindow
+    local eb = get and get()
+    return eb and eb:IsShown() and eb:HasFocus()
+end
+
+function ns.ChatOpenPayload()
+    if not openPending or GetTime() - openedAt < 0.1 then return nil end
+    local open = activeEditBox()
+    if not open and GetTime() - openedAt < 1.5 then return nil end
+    openPending = false
+    return "TE1|" .. openN .. "|" .. (open and "open" or "closed")
+end
+
 local function openWhisper(name)
     openedAt = GetTime()
     local tell = (ChatFrameUtil and ChatFrameUtil.SendTell) or ChatFrame_SendTell
@@ -104,7 +128,7 @@ local function whisperButton(n)
         b:SetScript("OnClick", function()
             if GetTime() - last < 0.5 then return end
             last = GetTime()
-            if whisperName[n] then openWhisper(whisperName[n]) end
+            if whisperName[n] then noteOpen() openWhisper(whisperName[n]) end
         end)
         whisperButtons[n] = b
     end
@@ -134,6 +158,7 @@ local function answerButton(n)
             if GetTime() - last < 0.5 then return end
             last = GetTime()
             openedAt = GetTime()
+            noteOpen()
             local open = (ChatFrameUtil and ChatFrameUtil.OpenChat) or ChatFrame_OpenChat
             open(ANSWER[n]())
         end)

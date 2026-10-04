@@ -6,6 +6,7 @@
 --   an app that kept the bags from before knows at once whether they are still right)
 --   TB1|free/total|itemID:count:key,itemID:count:key,...    (the bags)
 --   TC2|now|itemID:readyAt,...                                (bag items on cooldown, in GetTime() seconds)
+--   TE1|n|open (or closed)                                    (whether the chat box opened, see Chat.lua)
 --   TU1|n|itemID|result                                       (what came of tapping a bag item, see Actions.lua)
 --   (key: the slot's tap key, an index into ns.ActionKeys; left out when unbound)
 --   TN2|itemID<tab>quality<tab>itemLevel<tab>requiredLevel<tab>sellPrice<tab>type<tab>name<newline>...
@@ -286,6 +287,12 @@ f:SetScript("OnEvent", function()
         if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
         if ticks % MAP_REFRESH_TICKS == 0 then lastSent[2], lastSent[5] = nil, nil end
         -- What came of a tap goes out at once; whatever it cut short is sent again.
+        local okOpen, opened = pcall(ns.ChatOpenPayload)
+        if okOpen and opened then
+            if showingTurn then lastSent[showingTurn] = nil showingTurn = nil end
+            ns.StripWrite(opened)
+            return
+        end
         local okUse, use = pcall(ns.UsePayload)
         if okUse and use then
             if showingTurn then lastSent[showingTurn] = nil showingTurn = nil end

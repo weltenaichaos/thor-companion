@@ -180,6 +180,7 @@ class MainActivity : Activity() {
     }
 
     override fun onStop() {
+        closeCompose()
         worker = null
         saveTrail()
         saveLast()
@@ -265,6 +266,9 @@ class MainActivity : Activity() {
                     message.startsWith("TQ1|") -> Gear.parse(message)?.let { runOnUiThread { onCharacter(character, it) } }
                     message.startsWith("TW1|") -> MapPicture.parse(message)?.let { takeMapPicture(it, message) }
                     message.startsWith("TI1|") -> IconPicture.parse(message)?.let { takeIcons(it, assembler.lastSeq) }
+                    message.startsWith("TE1|") -> message.split('|').let { f ->
+                        f.getOrNull(1)?.toIntOrNull()?.let { n -> chatBox = n to (f.getOrNull(2) == "open") }
+                    }
                     message.startsWith("TU1|") -> ItemUse.parse(message)?.let { runOnUiThread { onUse(it) } }
                     message.startsWith("TC2|") -> Cooldowns.parse(message)?.let { runOnUiThread { onCooldowns(it) } }
                     message.startsWith("TL1|") -> QuestLog.parse(message)?.let { runOnUiThread { onQuests(it) } }
@@ -481,6 +485,7 @@ class MainActivity : Activity() {
     }
 
     private fun show(p: Panel) {
+        if (p != Panel.CHAT) closeCompose()
         panel = p
         for ((key, b) in tabs) {
             b.background = if (key == p) Theme.box(this, ACCENT, 10) else null
@@ -493,7 +498,8 @@ class MainActivity : Activity() {
     private fun render() {
         content.removeAllViews()
         toolbar.removeAllViews()
-        footer.removeAllViews()
+        // While you type a chat message, the box below stays as it is.
+        if (composing == null) footer.removeAllViews()
         mapView = null
         updateLoadButton()
         updateBadges()
@@ -736,7 +742,8 @@ class MainActivity : Activity() {
             scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
         }
 
-        // Answer: one key opens the game's chat box for that chat; you type and send in the game.
+        if (composing != null) return
+        // Answer: type here, with the keyboard on this screen; Send opens the game's chat box and puts it in.
         val answers = when (chatTab) {
             ChatTab.ALL -> listOf("Group" to ActionKeys.ANSWER_GROUP, "Guild" to ActionKeys.ANSWER_GUILD, "Say" to ActionKeys.ANSWER_SAY, "Reply" to ActionKeys.ANSWER_WHISPER)
             ChatTab.GROUP -> listOf("Write to your group" to ActionKeys.ANSWER_GROUP)
@@ -746,9 +753,7 @@ class MainActivity : Activity() {
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(6), 0, 0) }
         for ((label, key) in answers) {
-            row.addView(chip(label) {
-                pressKey(key, onDone = { say("$label: type your message in the game") }) { err -> say("$label: $err") }
-            }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(4) })
+            row.addView(chip(label) { compose(label, key) }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(4) })
         }
         footer.addView(row)
     }
@@ -950,12 +955,92 @@ class MainActivity : Activity() {
         val view = line("", colour, 15f).apply { this.text = text; setPadding(0, dp(3), 0, dp(3)) }
         // Tap a line: one key that opens the whisper box for its sender in the game.
         val key = chat.whisperSlot(l.sender)?.let { ActionKeys.forWhisper(it) } ?: return view
-        view.setOnClickListener {
-            pressKey(key, onDone = { say("Whisper to $n: type your message in the game") }) { err ->
-                say("Whisper to $n: $err")
-            }
-        }
+        view.setOnClickListener { compose("Whisper to $n", key) }
         return view
+    }
+
+    /** The message being written, and to whom: (label, the key that opens the game's chat box for it). */
+    private var composing: Pair<String, String>? = null
+
+    /**
+     * A text field with this screen's keyboard, to write a chat message. While it is
+     * open the app takes the keyboard (the game gets it back after); Send then
+     * presses the one key that opens the game's chat box for that chat, waits until
+     * the addon says the box is open, types the message there and presses Enter:
+     * one tap on Send is one message, as if you had typed it in the game.
+     */
+    private fun compose(label: String, key: String) {
+        if (panel != Panel.CHAT) show(Panel.CHAT)
+        composing = label to key
+        footer.removeAllViews()
+        val field = android.widget.EditText(this).apply {
+            hint = "$label…"
+            setHintTextColor(DIM)
+            setTextColor(TEXT)
+            textSize = 15f
+            isSingleLine = true
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEND
+            background = Theme.box(context, SURFACE, 12, ACCENT)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            filters = arrayOf(android.text.InputFilter.LengthFilter(255))  // the game's limit
+        }
+        fun send() {
+            val text = field.text.toString().trim()
+            closeCompose()
+            if (text.isNotEmpty()) sendChat(label, key, text)
+        }
+        field.setOnEditorActionListener { _, action, _ ->
+            if (action == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) { send(); true } else false
+        }
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, 0) }
+        row.addView(field, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
+        row.addView(chip("Send") { send() }.apply { background = Theme.box(context, ACCENT, 18); setTextColor(Color.BLACK) })
+        row.addView(chip("✕") { closeCompose() }, LinearLayout.LayoutParams(dp(44), -2).apply { marginStart = dp(4) })
+        footer.addView(row)
+        // The keyboard needs a window that can take focus; the app's normally can't (so the game keeps the controller).
+        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+        field.requestFocus()
+        field.post {
+            getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                .showSoftInput(field, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
+
+    private fun closeCompose() {
+        if (composing == null) return
+        composing = null
+        getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+            .hideSoftInputFromWindow(footer.windowToken, 0)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+        if (panel == Panel.CHAT) render() else footer.removeAllViews()
+    }
+
+    /** The addon's last word on the chat box: its count, and whether it opened. */
+    @Volatile private var chatBox: Pair<Int, Boolean>? = null
+
+    private fun sendChat(label: String, key: String, text: String) {
+        val target = gameDisplay()
+        val before = chatBox?.first
+        lastKeyAt = SystemClock.uptimeMillis()
+        say("$label: sending…")
+        keys.execute {
+            val err = KeySender.send(this, target, key)
+            if (err != null && !err.startsWith("(focus")) return@execute runOnUiThread { say("$label not sent: $err") }
+            // Wait for the addon to see the box open; never type into the game without it.
+            val until = SystemClock.uptimeMillis() + 3000
+            while (SystemClock.uptimeMillis() < until && chatBox?.first == before) {
+                lastKeyAt = SystemClock.uptimeMillis()
+                SystemClock.sleep(50)
+            }
+            val box = chatBox
+            if (box == null || box.first == before || !box.second) {
+                return@execute runOnUiThread { say("$label not sent: the game's chat box didn't open (in combat or a menu open?)") }
+            }
+            val typed = KeySender.type(this, target, text)
+            if (typed != null && !typed.startsWith("(focus")) return@execute runOnUiThread { say("$label not sent: $typed") }
+            KeySender.send(this, target, "ENTER")
+            runOnUiThread { say("$label: sent") }
+        }
     }
 
     /** Battery check: how often and how long the app read the game's screen in the last minute. */

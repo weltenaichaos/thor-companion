@@ -73,8 +73,11 @@ when the game starts. In game:
   Tapping a line in the Chat tab starts a whisper to whoever wrote it: the app presses one
   key (ALT-SHIFT-F1..F10, one per recent sender) and the game opens the chat box with
   "/w Name "; you type and send the message in the game. The Chat tab has its own tabs
-  (All, Group, Whispers, Guild, General), and a button under each opens the game's chat
-  box ready to answer there: CTRL-SHIFT-F8 "/r ", F9 "/s ", F10 "/g ", F11 your group.
+  (All, Group, Whispers, Guild, General). A button under each (or a tap on a line, to
+  whisper its sender) opens a text field with the keyboard on the bottom screen; Send
+  presses the key that opens the game's chat box for that chat (CTRL-SHIFT-F8 "/r ", F9
+  "/s ", F10 "/g ", F11 your group, ALT-SHIFT-F1..F10 a whisper), waits until the addon
+  says the box is open (TE1), types the message into it and presses Enter.
 - ALT-SHIFT-F12 makes the addon send everything again; the app's "Load from the game"
   button presses it (shown while the bags or character haven't arrived, for example right
   after installing the app). The app also keeps the last bags, character and map across

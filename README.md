@@ -32,6 +32,11 @@ later on will be one key press per tap.
    picture once by itself, and icons of items it has not shown before (new loot) appear
    under the data square for a moment, out of combat. `/thor auto off` stops that.
    The map is sent again every minute, so a restarted app is soon up to date.
+   The Quests tab lists your quest log, and a level checker (also on the Character tab)
+   shows the experience to the next level, rested experience, how many kills that is
+   at the last kill's experience, and what the quests ready to turn in give.
+   Long-press an item for its type, levels and sell price. Long-press the status line
+   for the battery check.
 3. The **decoder** (`decoder/`) is plain Kotlin that the app uses. It is tested
    against a square drawn by the addon, upscaled and colour-shifted like on the Thor.
 
@@ -67,7 +72,9 @@ when the game starts. In game:
   addons, so those lines show as hidden.
   Tapping a line in the Chat tab starts a whisper to whoever wrote it: the app presses one
   key (ALT-SHIFT-F1..F10, one per recent sender) and the game opens the chat box with
-  "/w Name "; you type and send the message in the game.
+  "/w Name "; you type and send the message in the game. The Chat tab has its own tabs
+  (All, Group, Whispers, Guild, General), and a button under each opens the game's chat
+  box ready to answer there: CTRL-SHIFT-F8 "/r ", F9 "/s ", F10 "/g ", F11 your group.
 - ALT-SHIFT-F12 makes the addon send everything again; the app's "Load from the game"
   button presses it (shown while the bags or character haven't arrived, for example right
   after installing the app). The app also keeps the last bags, character and map across
@@ -76,9 +83,6 @@ when the game starts. In game:
   every bag slot has its own key (CTRL-F1 and up), bound out of combat, and tapping an
   item in the app's Bags tab presses that one key, which uses the item. It also turns the
   whisper keys off and on.
-- `/thor keytest` binds the CTRL and ALT function keys to a button that only prints their name, to check that
-  the app's Keys tab reaches the game (keys that arrive turn green in the app). Run it again to give the keys back.
-
 **App:** each build on GitHub Actions uploads a debug APK
 (`thor-companion-debug-apk`). Install it and open it on the bottom screen.
 

@@ -8,6 +8,7 @@
 --   TH1|...                                                   (new chat lines, see Chat.lua)
 --   TM1|...                                                   (places on the zone map, see Map.lua)
 --   TP1|... and TQ1|...                                       (character and gear, see Character.lua)
+-- and, for a few seconds after their keys, TW1 (zone picture, Map.lua) and TI1 (item icons, Icons.lua).
 -- The app keeps the names it has seen. State and bags are sent again every five
 -- minutes (names too), for an app that started after the game.
 
@@ -45,6 +46,11 @@ local function bagSummary(maxBytes)
     -- Too long for the strip: cut at an entry boundary, so no entry (and no tap key) is cut short.
     if #list > maxBytes then list = list:sub(1, maxBytes):match("^(.*),") or "" end
     return free, total, list
+end
+
+-- The distinct items in the bags, for the item icons (Icons.lua).
+function ns.BagIDs()
+    return bagIDs
 end
 
 local function status()
@@ -207,6 +213,8 @@ f:SetScript("OnEvent", function()
         local okPicture, picture = pcall(ns.MapPicturePayload)
         if not okPicture then picture = nil end
         if picture then ns.StripWrite(picture) lastSent = {} return end
+        local okIcons, icons = pcall(ns.IconsPayload)
+        if okIcons and icons then ns.StripWrite(icons) lastSent = {} return end
         if ns.StripBusy() then return end
         local p = nextMessage()
         if p then ns.StripWrite(p) end
@@ -245,6 +253,9 @@ SlashCmdList.THORCOMPANION = function(msg)
         print("|cff66ccffThor Companion|r public channels in the app's chat " .. (msg:sub(-2) == "on" and "on" or "off"))
     elseif msg == "map picture" then
         ns.MapPictureShow()
+    elseif msg == "icons" then
+        ns.IconsShow()
+        print("|cff66ccffThor Companion|r " .. ns.IconsInfo())
     elseif msg == "map" then
         print("|cff66ccffThor Companion|r " .. ns.MapInfo())
     elseif msg == "info" then

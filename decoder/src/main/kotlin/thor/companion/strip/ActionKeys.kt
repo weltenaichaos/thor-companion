@@ -21,6 +21,9 @@ object ActionKeys {
     /** The key that makes the addon send everything again (Data.lua), for an app that just started. */
     const val REFRESH = "ALT-SHIFT-F12"
 
+    /** The key that makes the addon show the item icons for the app to take (Icons.lua). */
+    const val ICONS = "CTRL-SHIFT-F12"
+
     /** The key for the addon's 1-based [index], or null. */
     fun forIndex(index: Int): String? = all.getOrNull(index - 1)
 }

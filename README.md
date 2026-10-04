@@ -20,10 +20,14 @@ later on will be one key press per tap.
 2. The **app** (`app/`) runs on the bottom screen. It captures the top screen a
    few times a second, reads the square and draws the panels.
    The Map tab draws the zone from those places, with an arrow for you and a line where
-   you walked; "Around me" zooms in. Its background is a picture of the zone the app
+   you walked; pinch the map or use + and − to zoom in around you (like the minimap),
+   and "Quest areas" turns the faint quest circles off. Its background is a picture of the zone the app
    takes itself: "Get zone picture" presses one key (ALT-SHIFT-F11), the addon shows the
    zone's map art (no quest icons, arrows or other addons' marks) in the middle of the
    screen for 3 seconds and says where, and the app cuts it out of one screenshot. Until then the background is a grid.
+   Item icons on the Bags and Character tabs come the same way: "Get icons" presses
+   CTRL-SHIFT-F12, the addon shows up to 60 icons of your bag and worn items in a grid for
+   5 seconds, and the app keeps each one. Press it again for the next 60.
 3. The **decoder** (`decoder/`) is plain Kotlin that the app uses. It is tested
    against a square drawn by the addon, upscaled and colour-shifted like on the Thor.
 
@@ -49,6 +53,7 @@ when the game starts. In game:
   `/thor shape square` goes back.
 - `/thor map` prints what the zone picture did last and the places sent for the Map tab;
   `/thor map picture` shows the zone picture like the app's button.
+- `/thor icons` shows the next page of item icons like the app's "Get icons" button.
 - `/thor hide` and `/thor show` turn the square off and on.
 - `/thor chat channels on` adds public channels (General, Trade, ...) to the app's Chat tab;
   `off` (the default) leaves them out. Say, yell, emotes, whispers, party, raid, instance,

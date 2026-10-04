@@ -206,6 +206,9 @@ class PartAssembler {
     private var parts: Array<ByteArray?> = emptyArray()
     private var done = -1
 
+    /** The message number of the last whole message, to tell whether a later frame still shows it. */
+    val lastSeq: Int get() = done
+
     /** True while part of a message has been seen but not all of it. */
     val waiting: Boolean get() = done != seq && parts.size > 1
 

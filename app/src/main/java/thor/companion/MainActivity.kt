@@ -8,8 +8,9 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
-import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.GridLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -20,12 +21,22 @@ import thor.companion.strip.ChatLine
 import thor.companion.strip.Gear
 import thor.companion.strip.GearItem
 import thor.companion.strip.ChatLog
+import thor.companion.strip.IconPicture
 import thor.companion.strip.ItemNames
 import thor.companion.strip.MapPicture
 import thor.companion.strip.PartAssembler
 import thor.companion.strip.StripDecoder
 import thor.companion.strip.Trail
 import thor.companion.strip.ZoneMap
+import thor.companion.Theme.ACCENT
+import thor.companion.Theme.BG
+import thor.companion.Theme.DIM
+import thor.companion.Theme.GOLD
+import thor.companion.Theme.PRESSED
+import thor.companion.Theme.RAISED
+import thor.companion.Theme.STROKE
+import thor.companion.Theme.SURFACE
+import thor.companion.Theme.TEXT
 import java.util.Locale
 
 /**
@@ -38,9 +49,12 @@ class MainActivity : Activity() {
 
     private lateinit var screen: TopScreen
     private lateinit var names: NameStore
+    private lateinit var icons: IconStore
     private lateinit var status: TextView
+    private lateinit var statusDot: View
+    private lateinit var loadButton: TextView
     private lateinit var content: LinearLayout
-    private val tabs = HashMap<Panel, Button>()
+    private val tabs = HashMap<Panel, TextView>()
     private var panel = Panel.BAGS
     private var state: GameState? = null
     private val chat = ChatLog()
@@ -57,6 +71,8 @@ class MainActivity : Activity() {
 
     @Volatile private var worker: Thread? = null
     @Volatile private var lastKeyAt = 0L
+    /** When the square was last read: the dot by the status line is green while that is recent. */
+    @Volatile private var frameAt = 0L
     /** When the last status (with the position) came in: it is only sent when something changed. */
     private var movedAt = 0L
     /** Start time and duration (ms) of each capture in the last minute, for the battery check. */
@@ -72,38 +88,62 @@ class MainActivity : Activity() {
         names = NameStore(this)
         screen.displayId = getPreferences(MODE_PRIVATE).getString("display", null)
 
+        icons = IconStore(this)
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(BG)
-            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setPadding(dp(12), dp(10), dp(12), dp(6))
         }
-        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        // The tabs: one bar, the open one in gold.
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = Theme.box(context, SURFACE, 14)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
         for (p in Panel.entries) {
-            val b = Button(this).apply {
+            val b = TextView(this).apply {
                 text = p.title
-                isAllCaps = false
                 textSize = 15f
+                gravity = Gravity.CENTER
+                typeface = Typeface.DEFAULT_BOLD
                 setOnClickListener { show(p) }
             }
             tabs[p] = b
-            header.addView(b, LinearLayout.LayoutParams(0, dp(52), 1f).apply { marginEnd = dp(6) })
+            header.addView(b, LinearLayout.LayoutParams(0, dp(44), if (p == Panel.KEYS) 0.7f else 1f))
         }
+        // The status line: a dot that says whether the game's data is coming in, what happened
+        // last, and the one key that asks the game for everything when something is missing.
+        val statusRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(6), 0, dp(6))
+        }
+        statusDot = View(this).apply { background = Theme.box(context, Theme.WARN, 5) }
         status = TextView(this).apply {
             setTextColor(DIM)
             textSize = 13f
-            setPadding(0, dp(6), 0, dp(6))
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(8), 0, dp(8), 0)
             setOnLongClickListener { nextDisplay(); true }
         }
+        loadButton = chip("Load from the game") {
+            pressKey(ActionKeys.REFRESH, onDone = { say("Asked the game for everything again…") }) { err -> say("Couldn't ask the game: $err") }
+        }
+        statusRow.addView(statusDot, LinearLayout.LayoutParams(dp(10), dp(10)))
+        statusRow.addView(status, LinearLayout.LayoutParams(0, -2, 1f))
+        statusRow.addView(loadButton)
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(header)
-        root.addView(status)
-        scroll = ScrollView(this).apply { addView(content) }
+        root.addView(statusRow)
+        scroll = ScrollView(this).apply { addView(content); isVerticalScrollBarEnabled = false }
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
         runCatching { trail.load(trailFile().readText()) }
         loadLast()
         show(Panel.BAGS)
-        status.text = "Looking for the game…"
+        say("Looking for the game…")
     }
 
     override fun onStart() {
@@ -163,8 +203,8 @@ class MainActivity : Activity() {
     private fun loop() {
         if (!RootShell.available()) {
             runOnUiThread {
-                status.text = "Can't capture the top screen: the Thor's root service isn't reachable. " +
-                    "Check that Settings › Thor › Force SELinux is off."
+                say("Can't capture the top screen: the Thor's root service isn't reachable. " +
+                    "Check that Settings › Thor › Force SELinux is off.")
             }
             return
         }
@@ -182,6 +222,7 @@ class MainActivity : Activity() {
             }
             if (frame != null) {
                 misses = 0
+                frameAt = SystemClock.uptimeMillis()
                 near = frame.row
                 val message = assembler.add(frame)
                 val page = message?.let { ItemNames.parse(it) }
@@ -194,6 +235,7 @@ class MainActivity : Activity() {
                     message.startsWith("TP1|") -> CharacterInfo.parse(message)?.let { runOnUiThread { onCharacter(it, gear) } }
                     message.startsWith("TQ1|") -> Gear.parse(message)?.let { runOnUiThread { onCharacter(character, it) } }
                     message.startsWith("TW1|") -> MapPicture.parse(message)?.let { takeMapPicture(it, message) }
+                    message.startsWith("TI1|") -> IconPicture.parse(message)?.let { takeIcons(it, assembler.lastSeq) }
                     message.startsWith("TK1|") -> {
                         val keys = message.substring(4).split(',').filter { it.isNotEmpty() }.toSet()
                         runOnUiThread { onKeys(keys) }
@@ -211,7 +253,7 @@ class MainActivity : Activity() {
                     result is StripDecoder.Result.Failed -> result.reason
                     else -> "the data was damaged"
                 }
-                runOnUiThread { status.text = "No data from the addon ($why). Is the game open with ThorCompanion on?" }
+                runOnUiThread { say("No data from the addon ($why). Is the game open with ThorCompanion on?") }
             }
             // Reading the screen is what costs battery, so look once a second while
             // nothing is going on. The addon shows each part of a longer message for
@@ -238,7 +280,7 @@ class MainActivity : Activity() {
             if (panel == Panel.BAGS) render()
         }
         val parsed = GameState.parse(message, state)
-        status.text = if (parsed == null) "Connected, but the addon sent something unexpected: ${message.take(80)}" else "Connected"
+        say(if (parsed == null) "Connected, but the addon sent something unexpected: ${message.take(80)}" else "Connected")
         if (parsed == null || parsed == state) return
         val moved = parsed.copy(x = state?.x, y = state?.y, facing = state?.facing) == state
         state = parsed
@@ -282,6 +324,33 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * The addon shows item icons in a grid for a few seconds: one full screenshot, and
+     * each icon cut out of it and kept. Only when the same screenshot still shows that
+     * message ([seq]), so icons that went away in between are not taken. Runs on the
+     * reader thread.
+     */
+    private fun takeIcons(pic: IconPicture, seq: Int) {
+        fun done(note: String) = runOnUiThread {
+            say(note)
+            if (panel == Panel.BAGS || panel == Panel.CHARACTER) render()
+        }
+        val px = screen.capture(rows = 4000) ?: return done("Item icons not taken: the screenshot failed")
+        val frame = (StripDecoder.decode(px) as? StripDecoder.Result.Ok)?.frame?.takeIf { it.crcOk }
+        if (frame == null || frame.seq != seq) return done("Item icons not taken: they went away before the screenshot")
+        var taken = 0
+        for ((i, id) in pic.itemIds.withIndex()) {
+            val r = pic.onScreen(frame, i)
+            // One pixel in from each side: the edges blend into the black around the icon.
+            val l = r[0] + 1; val t = r[1] + 1; val w = r[2] - r[0] - 2; val h = r[3] - r[1] - 2
+            if (w < 8 || h < 8 || l < 0 || t < 0 || l + w > px.width || t + h > px.height) continue
+            val pixels = IntArray(w * h) { k -> px.rgb(l + k % w, t + k / w) or (0xFF shl 24) }
+            icons.put(id, android.graphics.Bitmap.createBitmap(pixels, w, h, android.graphics.Bitmap.Config.ARGB_8888))
+            taken++
+        }
+        done(if (taken == 0) "Item icons not taken: they were outside the screen" else "Took $taken item icons")
+    }
+
     /** What happened to the last map picture, shown under the map (the status line changes too often). */
     private var pictureNote = ""
     private var pictureLine: TextView? = null
@@ -294,7 +363,7 @@ class MainActivity : Activity() {
     }
 
     private fun onCharacter(c: CharacterInfo?, g: List<GearItem>) {
-        status.text = "Connected"
+        say("Connected")
         if (c == character && g == gear) return
         character = c
         gear = g
@@ -302,26 +371,26 @@ class MainActivity : Activity() {
     }
 
     private fun onMap(map: ZoneMap) {
-        status.text = "Connected"
+        say("Connected")
         if (map == zoneMap) return
         zoneMap = map
         if (panel == Panel.MAP) render()
     }
 
     private fun onChat(message: String) {
-        status.text = "Connected"
+        say("Connected")
         if (chat.add(message) == true && panel == Panel.CHAT) render()
     }
 
     private fun onKeys(keys: Set<String>) {
-        status.text = "Connected, key test running"
+        say("Connected, key test running")
         if (keys == gotKeys) return
         gotKeys = keys
         if (panel == Panel.KEYS) render()
     }
 
     private fun onNames(changed: Boolean) {
-        status.text = "Connected"
+        say("Connected")
         if (changed && (panel == Panel.BAGS || panel == Panel.CHARACTER)) render()
     }
 
@@ -332,32 +401,31 @@ class MainActivity : Activity() {
             val next = ids[(ids.indexOf(screen.displayId) + 1) % ids.size]
             screen.displayId = next
             getPreferences(MODE_PRIVATE).edit().putString("display", next).apply()
-            runOnUiThread { status.text = "Capturing screen ${next ?: "default"}" }
+            runOnUiThread { say("Capturing screen ${next ?: "default"}") }
         }.start()
     }
 
     private fun show(p: Panel) {
         panel = p
         for ((key, b) in tabs) {
-            b.background = GradientDrawable().apply {
-                cornerRadius = dp(10).toFloat()
-                setColor(if (key == p) ACCENT else CARD)
-            }
-            b.setTextColor(if (key == p) Color.BLACK else TEXT)
+            b.background = if (key == p) Theme.box(this, ACCENT, 10) else null
+            b.setTextColor(if (key == p) Color.BLACK else DIM)
         }
+        scroll.scrollTo(0, 0)
         render()
     }
 
     private fun render() {
         content.removeAllViews()
         mapView = null
+        updateLoadButton()
         if (panel == Panel.KEYS) {
             renderKeys()
             return
         }
         val s = state
         if (s == null) {
-            content.addView(line("Waiting for the game…", DIM))
+            content.addView(empty("Waiting for the game…", "Open WoW with the ThorCompanion addon on. If it is already open, tap Load from the game."))
             return
         }
         when (panel) {
@@ -369,76 +437,95 @@ class MainActivity : Activity() {
         }
     }
 
+    /** The status line, with its dot: green while the game's data comes in, red when it stopped, amber before it ever came. */
+    private fun say(text: String) {
+        status.text = text
+        val since = SystemClock.uptimeMillis() - frameAt
+        val colour = when {
+            frameAt == 0L -> Theme.WARN
+            since < 5000 -> Theme.GOOD
+            else -> Theme.BAD
+        }
+        (statusDot.background as GradientDrawable).setColor(colour)
+        updateLoadButton()
+    }
+
+    /** Load from the game shows only while something is missing or old: then one tap asks the addon for everything. */
+    private fun updateLoadButton() {
+        val missing = state == null || state?.freeSlots == null || !bagsFresh || character == null || gear.isEmpty()
+        loadButton.visibility = if (missing && panel != Panel.KEYS) View.VISIBLE else View.GONE
+    }
+
     /** Name, level, experience, item level, stats and what you wear. */
     private fun renderCharacter(s: GameState) {
         val c = character
-        if (c == null) content.addView(refreshButton())
-        content.addView(line(s.name, c?.classFile?.let { classColour(it) } ?: TEXT, 26f, bold = true))
-        content.addView(line(listOfNotNull("Level ${s.level ?: "?"}", c?.race, c?.className).joinToString(" "), TEXT, 17f))
-        c?.guild?.let { content.addView(line("<$it>", DIM, 15f)) }
-
+        val classColour = c?.classFile?.let { classColour(it) } ?: TEXT
+        val head = card()
+        head.addView(line(s.name, classColour, 24f, bold = true).apply { setPadding(0, 0, 0, 0) })
+        head.addView(line(listOfNotNull("Level ${s.level ?: "?"}", c?.race, c?.className).joinToString(" "), TEXT, 15f).apply { setPadding(0, dp(2), 0, 0) })
+        c?.guild?.let { head.addView(line("<$it>", Theme.GOOD, 13f).apply { setPadding(0, dp(2), 0, 0) }) }
         val xp = c?.xp; val xpMax = c?.xpMax
         if (xp != null && xpMax != null && xpMax > 0) {
-            val bar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-                max = 1000
-                progress = (xp * 1000 / xpMax).toInt()
-                secondaryProgress = (minOf(xpMax, xp + (c?.rested ?: 0)) * 1000 / xpMax).toInt()
-                progressTintList = android.content.res.ColorStateList.valueOf(Color.rgb(160, 80, 220))
-                secondaryProgressTintList = android.content.res.ColorStateList.valueOf(Color.rgb(70, 110, 200))
+            val bar = Bar(this).apply {
+                value = xp.toFloat() / xpMax
+                second = (xp + (c?.rested ?: 0)).toFloat() / xpMax
             }
-            content.addView(bar, LinearLayout.LayoutParams(-1, dp(14)).apply { topMargin = dp(6) })
-            val rested = c?.rested?.takeIf { it > 0 }?.let { ", rested ${String.format(Locale.US, "%,d", it)}" } ?: ""
-            content.addView(line(String.format(Locale.US, "Experience %,d / %,d (%d%%)", xp, xpMax, xp * 100 / xpMax) + rested, DIM, 13f))
+            head.addView(bar, LinearLayout.LayoutParams(-1, dp(8)).apply { topMargin = dp(10) })
+            val rested = c?.rested?.takeIf { it > 0 }?.let { "  ·  rested ${String.format(Locale.US, "%,d", it)}" } ?: ""
+            head.addView(line(String.format(Locale.US, "%,d / %,d experience (%d%%)", xp, xpMax, xp * 100 / xpMax) + rested, DIM, 12f).apply { setPadding(0, dp(4), 0, 0) })
         }
+        content.addView(head, cardParams())
 
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(line(money(s), GOLD, 17f), LinearLayout.LayoutParams(0, -2, 1f))
-        c?.itemLevel?.let { row.addView(line(String.format(Locale.US, "Item level %.1f", it), TEXT, 17f)) }
-        content.addView(row)
+        val facts = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        facts.addView(fact("Item level", c?.itemLevel?.let { String.format(Locale.US, "%.1f", it) } ?: "?", ACCENT), weighted())
+        facts.addView(fact("Gold", money(s), GOLD), weighted(1.6f))
+        facts.addView(fact("Armor", c?.armor?.toString() ?: "?", TEXT), weighted())
+        content.addView(facts, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
         if (c != null && c.stats.any { it != null }) {
-            val names = listOf("Strength", "Agility", "Stamina", "Intellect")
-            val parts = c.stats.mapIndexedNotNull { i, v -> v?.let { "${names[i]} $it" } } + listOfNotNull(c.armor?.let { "Armor $it" })
-            content.addView(line(parts.joinToString("  ·  "), DIM, 14f))
+            val stats = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for ((i, name) in listOf("Strength", "Agility", "Stamina", "Intellect").withIndex()) {
+                stats.addView(fact(name, c.stats[i]?.toString() ?: "?", TEXT), weighted())
+            }
+            content.addView(stats, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         }
 
         val worn = gear.associateBy { it.slot }
-        if (worn.values.any { (it.durability ?: 100) <= 20 }) content.addView(line("Some gear is almost broken: repair soon.", Color.rgb(255, 90, 90), 15f, bold = true))
+        if (worn.values.any { (it.durability ?: 100) <= 20 }) {
+            content.addView(line("Some gear is almost broken: repair soon.", Theme.BAD, 15f, bold = true).apply { setPadding(dp(4), dp(10), 0, 0) })
+        }
+        content.addView(section("Equipment" + iconHint(gear.map { it.itemId })))
         val grid = GridLayout(this).apply { columnCount = 2 }
         for (slot in GEAR_SLOTS) {
             val g = worn[slot]
             val known = g?.let { names[it.itemId] }
             val dur = g?.durability
             val detail = listOfNotNull(g?.itemLevel?.takeIf { it > 0 }?.let { "ilvl $it" }, dur?.let { "$it%" }).joinToString("  ·  ")
-            val card = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(8), dp(4), dp(8), dp(4))
-                background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(CARD) }
-                addView(line(Gear.slotName(slot), DIM, 11f).apply { setPadding(0, 0, 0, 0) })
-                addView(line(if (g == null) "—" else known?.name ?: "#${g.itemId}", if (known != null) qualityColour(known.quality) else DIM, 14f).apply {
-                    setPadding(0, 0, 0, 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-                })
-                if (detail.isNotEmpty()) addView(line(detail, when {
-                    dur != null && dur <= 20 -> Color.rgb(255, 90, 90)
-                    dur != null && dur <= 50 -> Color.rgb(255, 210, 90)
-                    else -> DIM
-                }, 11f).apply { setPadding(0, 0, 0, 0) })
+            val quality = known?.let { qualityColour(it.quality) }
+            val tile = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(6), dp(5), dp(8), dp(5))
+                background = Theme.box(context, SURFACE, 10, quality?.let { Theme.withAlpha(it, 110) } ?: STROKE)
             }
-            grid.addView(card, GridLayout.LayoutParams().apply {
+            tile.addView(icon(g?.itemId, quality, 36), LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(8) })
+            val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            words.addView(line(Gear.slotName(slot), DIM, 11f).apply { setPadding(0, 0, 0, 0) })
+            words.addView(line(if (g == null) "Empty" else known?.name ?: "#${g.itemId}", quality ?: DIM, 13f).apply {
+                setPadding(0, 0, 0, 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+            if (detail.isNotEmpty()) words.addView(line(detail, when {
+                dur != null && dur <= 20 -> Theme.BAD
+                dur != null && dur <= 50 -> Theme.WARN
+                else -> DIM
+            }, 11f).apply { setPadding(0, 0, 0, 0) })
+            tile.addView(words, LinearLayout.LayoutParams(0, -2, 1f))
+            grid.addView(tile, GridLayout.LayoutParams().apply {
                 width = 0
                 columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
                 setMargins(dp(3), dp(3), dp(3), dp(3))
             })
         }
         content.addView(grid)
-    }
-
-    /** One key that makes the addon send everything again. */
-    private fun refreshButton() = Button(this).apply {
-        isAllCaps = false
-        text = "Load from the game"
-        setOnClickListener {
-            pressKey(ActionKeys.REFRESH, onDone = { status.text = "Asked the game for everything again…" }) { err -> status.text = "Couldn't ask the game: $err" }
-        }
     }
 
     /** WoW's class colours. */
@@ -453,48 +540,67 @@ class MainActivity : Activity() {
 
     /** The zone drawn from the addon's places, with the path walked and an arrow for you. */
     private fun renderMap() {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val title = line("", TEXT, 18f, bold = true)
-        row.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
         val prefs = getPreferences(MODE_PRIVATE)
+        val title = line("", TEXT, 17f, bold = true).apply { setPadding(dp(4), 0, 0, 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+        content.addView(title)
         val view = MapView(this).apply {
             close = prefs.getBoolean("mapClose", false)
+            span = prefs.getFloat("mapSpan", 0.4f).toDouble()
+            questAreas = prefs.getBoolean("mapQuests", true)
             onPlace = { p ->
-                status.text = MapView.kindName(p.kind) + (if (p.label.isEmpty()) "" else ": ${p.label}") +
-                    String.format(Locale.US, " (%.1f, %.1f)", p.x * 100, p.y * 100)
+                say(MapView.kindName(p.kind) + (if (p.label.isEmpty()) "" else ": ${p.label}") +
+                    String.format(Locale.US, " (%.1f, %.1f)", p.x * 100, p.y * 100))
             }
         }
-        val zoom = Button(this).apply {
-            isAllCaps = false
-            text = if (view.close) "Whole zone" else "Around me"
-            setOnClickListener {
-                view.close = !view.close
-                prefs.edit().putBoolean("mapClose", view.close).apply()
-                text = if (view.close) "Whole zone" else "Around me"
-                view.invalidate()
-            }
+        val whole = chip("") {}
+        fun zoomed() {
+            prefs.edit().putBoolean("mapClose", view.close).putFloat("mapSpan", view.span.toFloat()).apply()
+            whole.text = if (view.close) "Whole zone" else "Around me"
+            view.invalidate()
         }
-        val take = Button(this).apply {
-            isAllCaps = false
-            text = "Get zone picture"
+        view.onZoom = ::zoomed
+        whole.setOnClickListener { view.close = !view.close; zoomed() }
+        // Zoom in steps, like the minimap's + and −; a pinch on the map works too.
+        fun zoom(by: Double) {
+            val now = if (view.close) view.span else 1.0
+            val next = (now * by).coerceIn(MapView.MIN_SPAN, 1.0)
+            view.close = next < 0.95
+            if (view.close) view.span = next
+            zoomed()
+        }
+        val quests = chip(if (view.questAreas) "Quest areas on" else "Quest areas off") {}
+        quests.setOnClickListener {
+            view.questAreas = !view.questAreas
+            prefs.edit().putBoolean("mapQuests", view.questAreas).apply()
+            quests.text = if (view.questAreas) "Quest areas on" else "Quest areas off"
+            view.invalidate()
+        }
+        val take = chip("Get zone picture") {
             // One key: the addon shows the zone's map art for a few seconds and the app takes it.
-            setOnClickListener {
-                pictureNote = "Asked the game for the zone picture…"
-                updateMap()
-                pressKey(ActionKeys.PICTURE) { err -> pictureNote = "Map picture not taken: $err"; updateMap() }
-            }
+            pictureNote = "Asked the game for the zone picture…"
+            updateMap()
+            pressKey(ActionKeys.PICTURE) { err -> pictureNote = "Map picture not taken: $err"; updateMap() }
         }
-        row.addView(take)
-        row.addView(zoom)
-        content.addView(row)
-        content.addView(view, LinearLayout.LayoutParams(-1, maxOf(dp(240), scroll.height - dp(90))))
-        val note = line("", DIM, 12f)
+        val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        controls.addView(chip("−") { zoom(1.4) }, LinearLayout.LayoutParams(dp(48), -2).apply { marginEnd = dp(6) })
+        controls.addView(chip("+") { zoom(1 / 1.4) }, LinearLayout.LayoutParams(dp(48), -2).apply { marginEnd = dp(6) })
+        controls.addView(whole, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(6) })
+        controls.addView(quests, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(6) })
+        controls.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f))
+        controls.addView(take)
+        content.addView(controls, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4); bottomMargin = dp(6) })
+        content.addView(view, LinearLayout.LayoutParams(-1, maxOf(dp(240), scroll.height - dp(110))))
+        val note = line("", DIM, 12f).apply { setPadding(dp(4), dp(4), 0, 0) }
         content.addView(note)
         pictureLine = note
+        pictureButton = take
         mapView = view
         mapTitle = title
+        zoomed()
         updateMap()
     }
+
+    private var pictureButton: TextView? = null
 
     private fun updateMap() {
         val view = mapView ?: return
@@ -506,9 +612,15 @@ class MainActivity : Activity() {
         view.facing = s?.facing
         view.trail = s?.mapId?.let { trail.paths[it] }.orEmpty()
         view.picture = s?.mapId?.let { picture(it) }
-        val where = if (s?.x != null && s.y != null && s.x!! > 0) String.format(Locale.US, "  %.1f, %.1f", s.x!! * 100, s.y!! * 100) else ""
-        mapTitle?.text = (map?.zone?.ifEmpty { null } ?: "Map ${s?.mapId ?: "unknown"}") + where +
-            (if (s?.mapId != null && view.picture == null) "  (no picture yet)" else "")
+        val where = if (s?.x != null && s.y != null && s.x!! > 0) String.format(Locale.US, "   %.1f, %.1f", s.x!! * 100, s.y!! * 100) else ""
+        mapTitle?.text = (map?.zone?.ifEmpty { null } ?: "Map ${s?.mapId ?: "unknown"}") + where
+        // Without a picture yet, the button that takes one is the thing to tap.
+        pictureButton?.let { b ->
+            val none = s?.mapId != null && view.picture == null
+            b.text = if (none) "Get zone picture" else "New picture"
+            b.background = Theme.box(this, if (none) ACCENT else RAISED, 18)
+            b.setTextColor(if (none) Color.BLACK else TEXT)
+        }
         pictureLine?.text = pictureNote
         pictureLine?.visibility = if (pictureNote.isEmpty()) View.GONE else View.VISIBLE
         view.invalidate()
@@ -517,24 +629,17 @@ class MainActivity : Activity() {
     /** The chat lines, newest at the bottom, coloured like WoW's chat frame. */
     private fun renderChat() {
         if (chat.lines.isEmpty()) {
-            content.addView(line("No chat yet. New lines in say, whispers, party, raid, guild and system messages show up here. Tap a line to whisper its sender.", DIM))
+            content.addView(empty("No chat yet", "New lines in say, whispers, party, raid, guild and system messages show up here. Tap a line to whisper its sender."))
             return
         }
-        for (l in chat.lines.takeLast(100)) content.addView(chatLine(l))
+        val box = card().apply { setPadding(dp(10), dp(6), dp(10), dp(6)) }
+        for (l in chat.lines.takeLast(100)) box.addView(chatLine(l))
+        content.addView(box, cardParams())
         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
     }
 
     private fun chatLine(l: ChatLine): TextView {
         val n = l.name
-        val who = when {
-            n.isEmpty() -> ""
-            l.kind == "whisper" -> "$n whispers: "
-            l.kind == "whisper_to" -> "To $n: "
-            l.kind == "emote" -> "$n "
-            l.kind == "yell" -> "$n yells: "
-            l.channel.isNotEmpty() -> "[${l.channel}] $n: "
-            else -> "$n: "
-        }
         val colour = when (l.kind) {
             "whisper", "whisper_to" -> Color.rgb(255, 128, 255)
             "bnwhisper", "bnwhisper_to" -> Color.rgb(0, 255, 246)
@@ -548,12 +653,30 @@ class MainActivity : Activity() {
             "channel" -> Color.rgb(255, 192, 192)
             else -> TEXT
         }
-        val view = line(who + l.text, colour, 15f).apply { setPadding(0, dp(2), 0, dp(2)) }
+        // The channel quiet, the name bold, then what was said.
+        val text = android.text.SpannableStringBuilder()
+        fun add(part: String, vararg spans: Any) {
+            val start = text.length
+            text.append(part)
+            for (span in spans) text.setSpan(span, start, text.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        if (l.channel.isNotEmpty()) add("${l.channel}  ", android.text.style.ForegroundColorSpan(DIM))
+        val who = when {
+            n.isEmpty() -> ""
+            l.kind == "whisper" -> "$n whispers: "
+            l.kind == "whisper_to" -> "To $n: "
+            l.kind == "emote" -> "$n "
+            l.kind == "yell" -> "$n yells: "
+            else -> "$n: "
+        }
+        if (who.isNotEmpty()) add(who, android.text.style.StyleSpan(Typeface.BOLD))
+        add(l.text)
+        val view = line("", colour, 15f).apply { this.text = text; setPadding(0, dp(3), 0, dp(3)) }
         // Tap a line: one key that opens the whisper box for its sender in the game.
         val key = chat.whisperSlot(l.sender)?.let { ActionKeys.forWhisper(it) } ?: return view
         view.setOnClickListener {
-            pressKey(key, onDone = { status.text = "Whisper to $n: type your message in the game" }) { err ->
-                status.text = "Whisper to $n: $err"
+            pressKey(key, onDone = { say("Whisper to $n: type your message in the game") }) { err ->
+                say("Whisper to $n: $err")
             }
         }
         return view
@@ -561,16 +684,17 @@ class MainActivity : Activity() {
 
     /** Key test: each button sends one key to the game's screen; `/thor keytest` in game prints what arrives. */
     private fun renderKeys() {
-        content.addView(line("Type /thor keytest in the game, then tap each key once. Keys the game reports back turn green.", DIM))
+        content.addView(line("Type /thor keytest in the game, then tap each key once. Keys the game reports back turn green.", DIM).apply { setPadding(dp(4), 0, 0, dp(6)) })
         val result = line(keyResult, TEXT)
         val grid = GridLayout(this).apply { columnCount = 4 }
         for (key in TEST_KEYS) {
             val got = key in gotKeys
-            val b = Button(this).apply {
+            val b = TextView(this).apply {
                 text = if (got) "✓ $key" else key
-                isAllCaps = false
+                gravity = Gravity.CENTER
+                textSize = 13f
                 setTextColor(if (got) Color.BLACK else TEXT)
-                background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(if (got) GOT else CARD) }
+                background = Theme.box(context, if (got) Theme.GOOD else SURFACE, 10, if (got) null else STROKE)
                 setOnClickListener {
                     pressKey(key, onDone = { keyResult = "Sent $key"; result.text = keyResult }) { err ->
                         keyResult = "$key: $err"
@@ -580,7 +704,7 @@ class MainActivity : Activity() {
             }
             grid.addView(b, GridLayout.LayoutParams().apply {
                 width = 0
-                height = dp(56)
+                height = dp(52)
                 columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
                 rowSpec = GridLayout.spec(GridLayout.UNDEFINED, GridLayout.FILL)
                 setMargins(dp(3), dp(3), dp(3), dp(3))
@@ -588,7 +712,7 @@ class MainActivity : Activity() {
         }
         content.addView(grid)
         content.addView(result)
-        content.addView(line(captureStats(), DIM).apply { setPadding(0, dp(16), 0, 0) })
+        content.addView(line(captureStats(), DIM).apply { setPadding(dp(4), dp(16), 0, 0) })
     }
 
     /** Battery check: how often and how long the app read the game's screen in the last minute. */
@@ -617,59 +741,166 @@ class MainActivity : Activity() {
     }
 
     private fun renderBags(s: GameState) {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(line(money(s), GOLD, 18f), LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(line("${s.freeSlots ?: "?"} of ${s.totalSlots ?: "?"} slots free", TEXT, 16f))
-        content.addView(row)
+        val head = card().apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(line("", GOLD, 18f, bold = true).apply { text = coins(s); setPadding(0, 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        val free = s.freeSlots; val total = s.totalSlots
+        val slots = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.END }
+        slots.addView(line(if (free != null && total != null) "$free of $total free" else "Slots unknown", TEXT, 14f).apply { setPadding(0, 0, 0, dp(4)) })
+        if (free != null && total != null && total > 0) {
+            val bar = Bar(this).apply {
+                value = (total - free).toFloat() / total
+                colour = if (free <= 3) Theme.BAD else if (free <= 8) Theme.WARN else Theme.GOOD
+            }
+            slots.addView(bar, LinearLayout.LayoutParams(dp(110), dp(6)))
+        }
+        head.addView(slots)
+        content.addView(head, cardParams())
 
+        val ids = s.items.map { it.itemId }
+        val hint = iconHint(ids)
+        content.addView(section((if (s.items.any { it.key != null } && bagsFresh) "Tap an item to use it" else "Items") + hint))
         val grid = GridLayout(this).apply { columnCount = 5; useDefaultMargins = false }
         for (item in s.items) {
             val known = names[item.itemId]
-            val tile = TextView(this).apply {
-                val count = if (item.count > 1) "\n×${item.count}" else ""
-                text = (known?.name ?: "#${item.itemId}") + count
+            val quality = known?.let { qualityColour(it.quality) }
+            val tile = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(dp(3), dp(6), dp(3), dp(4))
+                background = Theme.box(context, SURFACE, 10, known?.takeIf { it.quality >= 2 }?.let { Theme.withAlpha(qualityColour(it.quality), 150) } ?: STROKE)
+            }
+            val pic = FrameLayout(this)
+            pic.addView(icon(item.itemId, quality, 40), FrameLayout.LayoutParams(dp(40), dp(40)))
+            if (item.count > 1) pic.addView(TextView(this).apply {
+                text = item.count.toString()
+                textSize = 11f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setShadowLayer(3f, 0f, 0f, Color.BLACK)
+            }, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply { marginEnd = dp(1) })
+            tile.addView(pic, LinearLayout.LayoutParams(dp(40), dp(40)))
+            tile.addView(TextView(this).apply {
+                text = known?.name ?: "#${item.itemId}"
                 gravity = Gravity.CENTER
-                maxLines = 3
+                maxLines = 2
                 ellipsize = android.text.TextUtils.TruncateAt.END
-                setPadding(dp(4), dp(2), dp(4), dp(2))
-                setTextColor(if (known != null) qualityColour(known.quality) else DIM)
-                textSize = 12f
-                background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(CARD) }
-                // One tap, one key: the addon bound this key to "use the item in this slot".
-                val key = item.key?.let { ActionKeys.forIndex(it) }
-                val label = known?.name ?: "the item"
-                setOnClickListener { v ->
-                    if (!bagsFresh) {
-                        status.text = "These are your bags from before; tap Load from the game to update them before using items."
-                        return@setOnClickListener
-                    }
-                    if (key == null) {
-                        status.text = "$label has no tap key yet. Is the new addon loaded? /thor taps in game shows the keys."
-                        return@setOnClickListener
-                    }
-                    (v.background as GradientDrawable).setColor(PRESSED)
-                    v.postDelayed({ (v.background as GradientDrawable).setColor(CARD) }, 250)
-                    pressKey(key, onDone = { status.text = "Sent $key for $label" }) { err ->
-                        status.text = "Couldn't use $label: $err"
-                    }
+                textSize = 10.5f
+                setTextColor(quality ?: DIM)
+                setPadding(0, dp(3), 0, 0)
+            })
+            // One tap, one key: the addon bound this key to "use the item in this slot".
+            val key = item.key?.let { ActionKeys.forIndex(it) }
+            val label = known?.name ?: "the item"
+            tile.setOnClickListener { v ->
+                if (!bagsFresh) {
+                    say("These are your bags from before; tap Load from the game to update them before using items.")
+                    return@setOnClickListener
+                }
+                if (key == null) {
+                    say("$label has no tap key yet. Is the new addon loaded? /thor taps in game shows the keys.")
+                    return@setOnClickListener
+                }
+                (v.background as GradientDrawable).setColor(PRESSED)
+                v.postDelayed({ (v.background as GradientDrawable).setColor(SURFACE) }, 250)
+                pressKey(key, onDone = { say("Sent $key for $label") }) { err ->
+                    say("Couldn't use $label: $err")
                 }
             }
             grid.addView(tile, GridLayout.LayoutParams().apply {
                 width = 0
-                height = dp(72)
+                height = dp(92)
                 columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
                 // GridLayout lines tiles up by text baseline by default, which pushed
-                // one-line tiles (no stack count) above their neighbours.
+                // tiles with one line of name above their neighbours.
                 rowSpec = GridLayout.spec(GridLayout.UNDEFINED, GridLayout.FILL)
                 setMargins(dp(3), dp(3), dp(3), dp(3))
             })
         }
         content.addView(grid)
-        if (s.freeSlots == null || !bagsFresh) {
-            content.addView(line(if (s.freeSlots == null) "The bags haven't arrived yet." else "These are your bags from before; they update when the game sends them.", DIM))
-            content.addView(refreshButton())
-        } else if (s.items.isEmpty()) content.addView(line("Your bags are empty.", DIM))
-        else if (s.items.any { it.key != null }) content.addView(line("Tap an item to use it.", DIM))
+        when {
+            s.freeSlots == null -> content.addView(empty("The bags haven't arrived yet", "Tap Load from the game above."))
+            !bagsFresh -> content.addView(line("These are your bags from before; they update when the game sends them.", DIM).apply { setPadding(dp(4), dp(6), 0, 0) })
+            s.items.isEmpty() -> content.addView(empty("Your bags are empty", ""))
+        }
+    }
+
+    /** "  ·  N without icons" and a tap that asks the game for them, or "" when every icon is here. */
+    private fun iconHint(ids: List<Int>): String {
+        val missing = ids.distinct().count { !icons.has(it) }
+        return if (missing == 0) "" else "  ·  $missing without icon"
+    }
+
+    /** An item's icon, or a quiet square with a question mark until the app has it. */
+    private fun icon(itemId: Int?, quality: Int?, sizeDp: Int): View {
+        val bitmap = itemId?.let { icons[it] }
+        if (bitmap != null) return ImageView(this).apply {
+            setImageBitmap(bitmap)
+            scaleType = ImageView.ScaleType.FIT_XY
+            clipToOutline = true
+            background = Theme.box(context, RAISED, 6)
+        }
+        return TextView(this).apply {
+            text = if (itemId == null) "" else "?"
+            gravity = Gravity.CENTER
+            textSize = sizeDp / 2.6f
+            setTextColor(quality?.let { Theme.withAlpha(it, 160) } ?: DIM)
+            background = Theme.box(context, RAISED, 6)
+        }
+    }
+
+    /** One key: the addon shows the icons of your items for a few seconds and the app takes them. */
+    private fun askForIcons() {
+        say("Asked the game for the item icons…")
+        pressKey(ActionKeys.ICONS) { err -> say("Item icons not taken: $err") }
+    }
+
+    /** A title over a group, with a "Get icons" tap when some icons are missing. */
+    private fun section(title: String): View {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), dp(12), 0, dp(4)) }
+        row.addView(line(title, DIM, 13f).apply { setPadding(0, 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        if (title.contains("without icon")) row.addView(chip("Get icons") { askForIcons() })
+        return row
+    }
+
+    /** A rounded box to group things in. */
+    private fun card() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = Theme.box(context, SURFACE, 14, STROKE)
+        setPadding(dp(14), dp(12), dp(14), dp(12))
+    }
+
+    private fun cardParams() = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) }
+
+    private fun weighted(w: Float = 1f) = LinearLayout.LayoutParams(0, -2, w).apply { setMargins(dp(3), 0, dp(3), 0) }
+
+    /** A small labelled value, like "Item level 24.5". */
+    private fun fact(label: String, value: String, colour: Int) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = Theme.box(context, SURFACE, 10, STROKE)
+        setPadding(dp(10), dp(6), dp(10), dp(7))
+        addView(line(label, DIM, 11f).apply { setPadding(0, 0, 0, 0) })
+        addView(line(value, colour, 16f, bold = true).apply { setPadding(0, 0, 0, 0); maxLines = 1 })
+    }
+
+    /** A rounded button for the few things to tap that are not items. */
+    private fun chip(text: String, onClick: () -> Unit) = TextView(this).apply {
+        this.text = text
+        textSize = 13f
+        gravity = Gravity.CENTER
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(TEXT)
+        background = Theme.box(context, RAISED, 18)
+        setPadding(dp(12), dp(8), dp(12), dp(8))
+        setOnClickListener { onClick() }
+    }
+
+    /** What a tab shows while it has nothing yet. */
+    private fun empty(title: String, detail: String) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        setPadding(dp(16), dp(28), dp(16), dp(28))
+        addView(line(title, TEXT, 16f, bold = true).apply { gravity = Gravity.CENTER })
+        if (detail.isNotEmpty()) addView(line(detail, DIM, 13f).apply { gravity = Gravity.CENTER; textAlignment = View.TEXT_ALIGNMENT_CENTER })
     }
 
     /** WoW's item quality colours. */
@@ -685,7 +916,22 @@ class MainActivity : Activity() {
     }
 
     private fun money(s: GameState): String =
-        if (s.copper == null) "Gold unknown" else "${s.gold}g ${s.silver}s ${s.copperPart}c"
+        if (s.copper == null) "?" else "${s.gold}g ${s.silver}s ${s.copperPart}c"
+
+    /** The money with each coin in its colour, like the game's bag frame. */
+    private fun coins(s: GameState): CharSequence {
+        if (s.copper == null) return "Gold unknown"
+        val text = android.text.SpannableStringBuilder()
+        fun add(v: Long?, unit: String, colour: Int) {
+            val start = text.length
+            text.append(String.format(Locale.US, "%,d", v ?: 0)).append(unit).append("  ")
+            text.setSpan(android.text.style.ForegroundColorSpan(colour), start, text.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        if ((s.gold ?: 0) > 0) add(s.gold, "g", GOLD)
+        if ((s.gold ?: 0) > 0 || (s.silver ?: 0) > 0) add(s.silver, "s", Theme.SILVER)
+        add(s.copperPart, "c", Theme.COPPER)
+        return text.trimEnd()
+    }
 
     private fun line(text: String, colour: Int, size: Float = 15f, bold: Boolean = false) = TextView(this).apply {
         this.text = text
@@ -699,20 +945,12 @@ class MainActivity : Activity() {
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     private companion object {
-        /** Must match ns.TestKeys in addon/ThorCompanion/KeyTest.lua. */
-        /** The paper doll's slots, left column then right, as Character.lua sends them. */
         /** Message kinds kept across restarts. */
         val KEPT = setOf("TS1|", "TB1|", "TM1|", "TP1|", "TQ1|")
+        /** The paper doll's slots, left column then right, as Character.lua sends them. */
         val GEAR_SLOTS = listOf(1, 2, 3, 15, 5, 4, 19, 9, 10, 6, 7, 8, 11, 12, 13, 14, 16, 17)
+        /** Must match ns.TestKeys in addon/ThorCompanion/KeyTest.lua. */
         val TEST_KEYS = listOf("CTRL", "ALT").flatMap { mod -> (1..12).map { "$mod-F$it" } } - "ALT-F4" +
             listOf("F9", "SHIFT-F9", "CTRL-SHIFT-F9", "NUMPAD5")
-        val BG = Color.rgb(16, 18, 22)
-        val CARD = Color.rgb(36, 40, 48)
-        val TEXT = Color.rgb(230, 232, 236)
-        val DIM = Color.rgb(140, 146, 156)
-        val ACCENT = Color.rgb(255, 196, 64)
-        val GOT = Color.rgb(90, 210, 120)
-        val PRESSED = Color.rgb(70, 78, 92)
-        val GOLD = Color.rgb(255, 210, 90)
     }
 }

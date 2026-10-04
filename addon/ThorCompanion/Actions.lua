@@ -25,8 +25,8 @@ do
 end
 
 -- ALT-SHIFT-F1..F10 open whispers (Chat.lua), ALT-SHIFT-F11 shows the zone
--- picture (Map.lua), ALT-SHIFT-F12 sends everything again (Data.lua); bag slots
--- get the other keys.
+-- picture (Map.lua), ALT-SHIFT-F12 sends everything again (Data.lua),
+-- CTRL-SHIFT-F12 shows the item icons (Icons.lua); bag slots get the other keys.
 ns.WhisperKeys = {}
 local reserved = {}
 for i, key in ipairs(ns.ActionKeys) do
@@ -34,6 +34,7 @@ for i, key in ipairs(ns.ActionKeys) do
     if n and n <= 10 then ns.WhisperKeys[n] = i reserved[i] = true end
     if n == 11 then ns.PictureKey = i reserved[i] = true end
     if n == 12 then ns.RefreshKey = i reserved[i] = true end
+    if key == "CTRL-SHIFT-F12" then ns.IconKey = i reserved[i] = true end
 end
 
 local owner = CreateFrame("Frame")
@@ -113,6 +114,7 @@ function ns.SetTaps(on)
     ns.BindWhispers()
     ns.BindMapKey()
     ns.BindRefreshKey()
+    ns.BindIconKey()
 end
 
 local sizes = ""

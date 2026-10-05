@@ -206,6 +206,7 @@ class MainActivity : Activity() {
     private var bagsFresh = false
     private var bagsDifferSince = 0L
     private var addonChecked = false
+    private var addonWarned = false
     /** How the bags are sorted: 0 as in the game, 1 type, 2 quality, 3 sell value. */
     private var bagSort = 0
     private val lastMessages = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -352,6 +353,13 @@ class MainActivity : Activity() {
         }
         val parsed = GameState.parse(message, state)
         if (parsed != null && message.startsWith("TS1|")) {
+            // The game still running an older addon than the one this app brought: say so, once.
+            val bundled = AddonInstaller.version(this)
+            if (!addonWarned && bundled != null && parsed.addonVersion != bundled) {
+                addonWarned = true
+                say("The game is running an older Forever Companion addon (${parsed.addonVersion ?: "an old version"}); " +
+                    "this app has $bundled. Copy the new one into the game's AddOns folder and restart the game.", notice = true)
+            }
             // Bags kept from before a restart are right when the addon's checksum of its last bags says so.
             val kept = lastMessages["TB1|"]
             val matches = parsed.bagHash != null && kept != null && GameState.hash(kept) == parsed.bagHash

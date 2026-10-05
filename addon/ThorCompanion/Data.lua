@@ -1,9 +1,10 @@
 -- Data.lua
 -- Collects non-secret, out-of-combat-safe state and hands it to the strip.
 -- Several kinds of message, checked every half second, each sent only when it changed:
---   TS1|name|level|copper|mapID|x|y|facing|session|bagHash  (small, changes while walking)
+--   TS1|name|level|copper|mapID|x|y|facing|session|bagHash|version  (small, changes while walking)
 --   (session: changes with every login or /reload; bagHash: a checksum of the last TB1, so
---   an app that kept the bags from before knows at once whether they are still right)
+--   an app that kept the bags from before knows at once whether they are still right;
+--   version: this addon's, so the app can tell when the game still runs an older one)
 --   TB1|free/total|itemID:count:key,itemID:count:key,...    (the bags)
 --   TC2|now|itemID:readyAt,...                                (bag items on cooldown, in GetTime() seconds)
 --   TE1|n|open (or closed)                                    (whether the chat box opened, see Chat.lua)
@@ -72,6 +73,10 @@ local function checksum(s)
     return h
 end
 
+local getMetadata = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
+local okVersion, addonVersion = pcall(getMetadata, "ThorCompanion", "Version")
+addonVersion = okVersion and addonVersion or ""
+
 local function status()
     local name = plain(UnitName("player")) or "?"
     local level = plain(UnitLevel("player")) or 0
@@ -84,8 +89,8 @@ local function status()
     -- Facing in radians (0 = north, counter-clockwise), in steps of about 6 degrees.
     local facing = GetPlayerFacing and plain(GetPlayerFacing())
     facing = type(facing) == "number" and string.format("%.1f", facing) or ""
-    return string.format("TS1|%s|%s|%d|%d|%.4f|%.4f|%s|%s|%d", tostring(name), tostring(level),
-        GetMoney() or 0, mapID or 0, x or 0, y or 0, facing, session, bagHash)
+    return string.format("TS1|%s|%s|%d|%d|%.4f|%.4f|%s|%s|%d|%s", tostring(name), tostring(level),
+        GetMoney() or 0, mapID or 0, x or 0, y or 0, facing, session, bagHash, addonVersion)
 end
 
 local function bags()

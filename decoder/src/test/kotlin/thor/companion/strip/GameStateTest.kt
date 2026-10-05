@@ -55,5 +55,7 @@ class GameStateTest {
         assertNull(GameState.parse("TC1|error|Data.lua:12: boom"))
         assertNull(GameState.parse("hello"))
         assertNull(GameState.parse("TS1|error|Data.lua:12: boom"))
+        assertEquals("0.17.6", GameState.parse("TS1|Xandra|5|40912|1420|0.3|0.6|1.2|77|123|0.17.6")!!.addonVersion)
+        assertNull(GameState.parse("TS1|Xandra|5|40912|1420|0.3|0.6|1.2|77|123")!!.addonVersion)
     }
 }

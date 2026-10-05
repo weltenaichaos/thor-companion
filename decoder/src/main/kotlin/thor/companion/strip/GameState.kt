@@ -4,7 +4,7 @@ package thor.companion.strip
 data class BagItem(val itemId: Int, val count: Int, val key: Int? = null)
 
 /**
- * What the addon reports, put together from its `TS1|name|level|copper|mapID|x|y[|facing|session|bagHash]` and
+ * What the addon reports, put together from its `TS1|name|level|copper|mapID|x|y[|facing|session|bagHash|version]` and
  * `TB1|free/total|itemID:count[:key],...` messages (see addon/ThorCompanion/Data.lua).
  * Values the game keeps secret arrive as "?" and come out as null.
  */
@@ -24,6 +24,8 @@ data class GameState(
     val session: String? = null,
     /** The checksum ([hash]) of the bags message the addon sent last, to tell whether kept bags are still right. */
     val bagHash: Int? = null,
+    /** The addon's version, from its .toc; null from older addons, which didn't send it. */
+    val addonVersion: String? = null,
 ) {
     val gold: Long? get() = copper?.div(10000)
     val silver: Long? get() = copper?.div(100)?.rem(100)
@@ -65,6 +67,7 @@ data class GameState(
             facing = if (f[0] == "TS1") f.getOrNull(i + 6)?.toDoubleOrNull() else null,
             session = f.getOrNull(i + 7)?.takeIf { it.isNotEmpty() },
             bagHash = f.getOrNull(i + 8)?.toIntOrNull()?.takeIf { it != 0 },
+            addonVersion = if (f[0] == "TS1") f.getOrNull(i + 9)?.takeIf { it.isNotEmpty() } else null,
         )
 
         private fun bags(base: GameState, slotField: String, list: String): GameState {

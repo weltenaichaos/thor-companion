@@ -24,6 +24,8 @@ data class Quest(
     val level: Int = 0,
     /** Where to go next, also when that is in another zone; null when the game didn't say. */
     val waypoint: Waypoint? = null,
+    /** The town at [waypoint] (from the nearest flight master), empty when none is near. */
+    val place: String = "",
 ) {
     /** How hard it is for you at [playerLevel], like the game's quest colours. */
     fun difficulty(playerLevel: Int): Difficulty = when {
@@ -70,12 +72,12 @@ data class QuestLog(val lastKill: Long, val readyCount: Int, val readyXp: Long, 
         }
 
         internal fun rows(rows: List<String>): List<Quest> = rows.mapNotNull { row ->
-            val f = row.split('\t', limit = 7)
+            val f = row.split('\t', limit = 8)
             if (f.size < 4) return@mapNotNull null
             val objectives = f.getOrNull(4).orEmpty().split(';').filter { it.isNotEmpty() }
                 .map { if (it.startsWith("+")) Objective(it.substring(1), true) else Objective(it, false) }
             Quest(f[0].toIntOrNull() ?: return@mapNotNull null, f[1] == "r", f[1] != "o", f[2].toLongOrNull() ?: 0, f[3], objectives,
-                f.getOrNull(5)?.trim()?.toIntOrNull() ?: 0, Waypoint.parse(f.getOrNull(6)))
+                f.getOrNull(5)?.trim()?.toIntOrNull() ?: 0, Waypoint.parse(f.getOrNull(6)), f.getOrNull(7)?.trim().orEmpty())
             }
     }
 }

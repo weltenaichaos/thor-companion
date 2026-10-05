@@ -1,9 +1,11 @@
 -- Spells.lua
 -- Which class spells you can learn soon, for the app's level card:
---   TV1|level<newline><level><tab><state><tab><cost><tab><name><tab><rank><newline>...
+--   TV1|level|<trainer>|<town><newline><level><tab><state><tab><cost><tab><name><tab><rank><newline>...
 -- <level> is the level the spell needs, <state> r when your class trainer offers it
 -- to you now, f when it comes at a later level. <cost> is the trainer's price in
 -- copper (0 when not known). Sorted by level; spells you already know are left out.
+-- <trainer> is where you last opened your class trainer, "mapID:x:y:zone", and
+-- <town> the town there (both empty until then), for the app's errands.
 --
 -- Where it comes from, whatever this game allows:
 --   - your class trainer's list, read each time you open it (kept per character, so
@@ -51,6 +53,19 @@ local function readTrainer()
     end
     ThorCompanionDB.trainer = ThorCompanionDB.trainer or {}
     ThorCompanionDB.trainer[who()] = list
+    -- Where this trainer stands: where you are while its window is open.
+    local mapID = C_Map.GetBestMapForUnit("player")
+    local pos = mapID and C_Map.GetPlayerMapPosition(mapID, "player")
+    if pos then
+        local x, y = pos:GetXY()
+        if x and not secret(x) and x > 0 then
+            local info = C_Map.GetMapInfo(mapID)
+            local okPlace, place = pcall(ns.PlaceName, mapID, x, y)
+            ThorCompanionDB.trainerAt = ThorCompanionDB.trainerAt or {}
+            ThorCompanionDB.trainerAt[who()] = string.format("%d:%.3f:%.3f:%s|%s", mapID, x, y,
+                clean(info and info.name):gsub(":", " "), okPlace and clean(place) or "")
+        end
+    end
 end
 
 -- Worked out again only when something changed (the spellbook is long).
@@ -127,7 +142,8 @@ local function payload()
         if a.level ~= b.level then return a.level < b.level end
         return a.name < b.name
     end)
-    local head = "TV1|" .. level
+    local at = ThorCompanionDB and ThorCompanionDB.trainerAt and ThorCompanionDB.trainerAt[who()] or "|"
+    local head = "TV1|" .. level .. "|" .. at
     local room = ns.StripCapacity() - #head - 1
     local out, used = {}, 0
     for _, s in ipairs(list) do

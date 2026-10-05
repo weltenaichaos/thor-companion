@@ -99,6 +99,22 @@ local function places(mapID)
     return entries
 end
 
+-- The town at a place on a map, from the flight master nearest to it ("Crossroads,
+-- The Barrens" gives "Crossroads"), or "" when none is close (a tenth of the map).
+function ns.PlaceName(mapID, x, y)
+    local ok, nodes = pcall(C_TaxiMap.GetTaxiNodesForMap, mapID)
+    if not ok or not nodes then return "" end
+    local best, bestD = nil, 0.1
+    for _, n in ipairs(nodes) do
+        local nx, ny = xy(n.position)
+        if nx and n.name and not secret(n.name) then
+            local d = math.sqrt((nx - x) ^ 2 + ((ny - y) / 1.5) ^ 2)
+            if d < bestD then best, bestD = n.name, d end
+        end
+    end
+    return best and label(best):gsub(",.*$", ""):gsub("[\t|:]", " ") or ""
+end
+
 local sizeSource = "not asked yet"
 local sizeNote = "nothing measured yet"
 

@@ -24,6 +24,7 @@ import thor.companion.strip.ChatLog
 import thor.companion.strip.Cooldowns
 import thor.companion.strip.BagItem
 import thor.companion.strip.Compass
+import thor.companion.strip.Errands
 import thor.companion.strip.Delta
 import thor.companion.strip.Difficulty
 import thor.companion.strip.ItemTips
@@ -909,6 +910,7 @@ class MainActivity : Activity() {
             return
         }
         levelCard()?.let { content.addView(it, cardParams()) }
+        errandsCard(log)?.let { content.addView(it, cardParams()) }
         if (log.quests.isEmpty()) {
             content.addView(empty("Your quest log is empty", ""))
             return
@@ -955,8 +957,13 @@ class MainActivity : Activity() {
         for (o in q.objectives) {
             box.addView(line((if (o.done) "✓ " else "• ") + o.text, if (o.done) DIM else TEXT, 13f).apply { setPadding(dp(4), dp(1), 0, 0) })
         }
-        box.setOnClickListener {
-            // Selects it: its places get a white ring on the map, which zooms to show you and the nearest one.
+        box.setOnClickListener { selectQuest(q) }
+        return box
+    }
+
+    /** Selects quest [q]: its places get a white ring on the map, which zooms to show you and the nearest one. */
+    private fun selectQuest(q: Quest) {
+        run {
             tracked = q.title
             getPreferences(MODE_PRIVATE).edit().putString("tracked", q.title).apply()
             val h = heading(q)
@@ -973,6 +980,76 @@ class MainActivity : Activity() {
                 away != null -> "${q.title}: the next step is in $away, not in this zone"
                 else -> "${q.title}: not on this zone's map"
             })
+        }
+    }
+
+    /**
+     * Errands: the quests ready to turn in grouped by the town where they are handed in,
+     * plus the class trainer when spells are ready, so you can plan one trip for several.
+     * Folded to its title and count until tapped; stops in this zone come first, nearest
+     * on top, the rest by experience. Tapping a stop selects its first quest on the map.
+     */
+    private fun errandsCard(log: QuestLog): View? {
+        val stops = Errands.of(log, spells)
+        if (stops.isEmpty()) return null
+        val count = stops.sumOf { it.errands.size }
+        val open = getPreferences(MODE_PRIVATE).getBoolean("errandsOpen", false)
+        val box = card()
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        top.addView(line("Errands ($count)", TEXT, 16f, bold = true).apply { setPadding(0, 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        if (!open) top.addView(line(if (stops.size == 1) "1 stop" else "${stops.size} stops", DIM, 13f).apply { setPadding(dp(8), 0, dp(8), 0) })
+        top.addView(line(if (open) "▴" else "▾", DIM, 18f).apply { setPadding(dp(4), 0, 0, 0) })
+        top.setOnClickListener {
+            getPreferences(MODE_PRIVATE).edit().putBoolean("errandsOpen", !open).apply()
+            render()
+        }
+        box.addView(top)
+        if (!open) return box
+        // How far each stop is: its nearest turn-in on this zone's map, when there is one.
+        val yards = stops.associateWith { stop ->
+            stop.errands.mapNotNull { e -> e.quest?.let { heading(it) } }.minByOrNull { it.yards ?: Int.MAX_VALUE }
+        }
+        val here = stops.filter { yards[it] != null || (it.at != null && it.at?.mapId == state?.mapId) }
+            .sortedBy { yards[it]?.yards ?: Int.MAX_VALUE }
+        val known = stops.filter { it !in here && it.at != null }.sortedByDescending { it.xp }
+        val ordered = here + known + stops.filter { it !in here && it.at == null }
+        val best = stops.maxByOrNull { it.xp }?.takeIf { stops.size > 1 && it.xp > 0 }
+        for (stop in ordered) {
+            val s = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = Theme.box(context, RAISED, 10, if (stop == best) Theme.withAlpha(ACCENT, 150) else STROKE)
+                setPadding(dp(10), dp(6), dp(10), dp(7))
+            }
+            val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            head.addView(line(stop.name, TEXT, 14f, bold = true).apply { setPadding(0, 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+            if (stop == best) head.addView(line("most XP", ACCENT, 11f, bold = true).apply { setPadding(dp(8), 0, 0, 0) })
+            val where = listOfNotNull(
+                stop.zone.ifEmpty { null },
+                yards[stop]?.yards?.let { if (it < 15) "you're there" else "$it yd" },
+            ).joinToString("  ·  ")
+            if (where.isNotEmpty()) head.addView(line(where, DIM, 12f).apply { setPadding(dp(8), 0, 0, 0) })
+            s.addView(head)
+            for (e in stop.errands) {
+                val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                r.addView(line((if (e.trainer) "✦ " else "! ") + e.title, if (e.trainer) ACCENT else TEXT, 13f).apply { setPadding(0, dp(2), 0, dp(2)) },
+                    LinearLayout.LayoutParams(0, -2, 1f))
+                when {
+                    e.xp > 0 -> r.addView(line(String.format(Locale.US, "%,d XP", e.xp), Theme.XP_TEXT, 12f).apply { setPadding(dp(8), dp(2), 0, dp(2)) })
+                    e.cost > 0 -> r.addView(line("", DIM, 12f).apply { text = coins(e.cost); setPadding(dp(8), dp(2), 0, dp(2)) })
+                }
+                s.addView(r)
+            }
+            stop.errands.firstOrNull { it.quest != null }?.quest?.let { q -> s.setOnClickListener { selectQuest(q) } }
+            box.addView(s, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        }
+        val turnIns = stops.sumOf { st -> st.errands.count { it.quest != null } }
+        val xp = stops.sumOf { it.xp }
+        if (turnIns > 0) {
+            val c = character
+            val toGo = c?.let { (it.xpMax ?: 0) - (it.xp ?: 0) } ?: 0
+            var sum = String.format(Locale.US, "%d turn-in%s  ·  %,d XP", turnIns, if (turnIns == 1) "" else "s", xp)
+            if (toGo in 1..xp) sum += ", that's level ${(state?.level ?: 0) + 1}"
+            box.addView(line(sum, DIM, 12f).apply { setPadding(dp(2), dp(8), 0, 0) })
         }
         return box
     }

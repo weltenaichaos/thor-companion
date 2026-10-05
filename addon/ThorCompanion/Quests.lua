@@ -1,6 +1,6 @@
 -- Quests.lua
 -- The app's Quests tab and its level checker on the Character tab:
---   TL1|lastKill|readyCount|readyXP|pages<newline><questID><tab><state><tab><xp><tab><title><tab><objective>;<objective>...<tab><level><tab><waypoint><newline>...
+--   TL1|lastKill|readyCount|readyXP|pages<newline><questID><tab><state><tab><xp><tab><title><tab><objective>;<objective>...<tab><level><tab><waypoint><tab><place><newline>...
 -- lastKill is the experience the last kill gave without its rested bonus (0 until
 -- there was one), readyCount and readyXP count all quests ready to turn in and the
 -- experience they give. <state> is r (ready to turn in), z (in this zone) or o
@@ -9,7 +9,8 @@
 -- <level> is the quest's level (0 when unknown), for the colour of its title.
 -- <waypoint> is where the game's own arrow points next, "mapID:x:y:zone" (empty
 -- when the game doesn't say): for a quest ready to turn in that is whoever takes it,
--- also when they are in another zone.
+-- also when they are in another zone. <place> is the town there (empty when none
+-- is near), for the app's errands.
 
 local _, ns = ...
 
@@ -85,13 +86,15 @@ end
 -- Where to go next for a quest, as the game's own arrow knows it: "mapID:x:y:zone"
 -- (empty when the game doesn't say). This also covers quests whose next step, or
 -- whose turn-in, is in another zone.
+-- Also the town there, from the nearest flight master (empty when none is close).
 local function waypoint(id)
     local ok, mapID, x, y = pcall(C_QuestLog.GetNextWaypoint, id)
-    if not ok or not mapID or secret(mapID) or not x or not y then return "" end
+    if not ok or not mapID or secret(mapID) or not x or not y then return "", "" end
     mapID, x, y = number(mapID), number(x), number(y)
-    if not mapID or not x or not y then return "" end
+    if not mapID or not x or not y then return "", "" end
     local info = C_Map.GetMapInfo(mapID)
-    return string.format("%d:%.3f:%.3f:%s", mapID, x, y, clean(info and info.name, 24))
+    local okPlace, place = pcall(ns.PlaceName, mapID, x, y)
+    return string.format("%d:%.3f:%.3f:%s", mapID, x, y, clean(info and info.name, 24)), okPlace and clean(place, 24) or ""
 end
 
 -- The whole log, cut into pages that fit the square: page 1 goes out as TL1 (with the
@@ -120,7 +123,8 @@ local function build()
             local state = isReady and "r" or (info.isOnMap and "z" or "o")
             local level = number(info.difficultyLevel) or 0
             if level <= 0 then level = number(info.level) or 0 end
-            local entry = table.concat({ id, state, xp, clean(info.title, MAX_TITLE), table.concat(objectives, ";"), level, waypoint(id) }, "\t")
+            local where, place = waypoint(id)
+            local entry = table.concat({ id, state, xp, clean(info.title, MAX_TITLE), table.concat(objectives, ";"), level, where, place }, "\t")
             if state == "o" then elsewhere[#elsewhere + 1] = entry else here[#here + 1] = entry end
         end
     end

@@ -41,6 +41,10 @@ later on will be one key press per tap.
    A chip on the level card says which class spells you can learn now at your trainer
    and at the next levels; tapping it shows them with the trainer's prices (known
    once you have opened your class trainer).
+   A folded "Errands (N)" card above the quests groups what you can hand in by town
+   (the town comes from the nearest flight master to the turn-in), plus your class
+   trainer when spells are ready there, so you can plan one trip for several quests.
+   Stops in this zone come first, nearest on top; the stop worth the most XP is marked.
    Quests show their level in the game's colours and, in this zone, how many yards
    away they are, nearest first. Tapping one selects it: a white ring on its places,
    the map zooms to show you and the nearest one, and a line above the map keeps the

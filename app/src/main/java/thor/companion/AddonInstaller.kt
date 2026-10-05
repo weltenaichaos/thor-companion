@@ -9,10 +9,18 @@ import java.io.File
  * copies into the game at every start. Only when that folder holds another version;
  * the folder name stays ThorCompanion, so the addon keeps its settings. The game's
  * own folders are left to the launcher.
+ *
+ * The root service may not see shared storage as /sdcard, so the same folder is
+ * tried under each name it goes by. The script runs from a file and writes what it
+ * did to another, since the root service passes on only one line of output.
  */
 object AddonInstaller {
     private const val NAME = "ThorCompanion"
-    private val TARGETS = listOf("/sdcard/Download/Thor-Forever/AddOns")
+    private const val KIT = "Download/Thor-Forever"
+    private val STORAGE = listOf("/sdcard", "/storage/emulated/0", "/mnt/user/0/emulated/0", "/data/media/0")
+
+    /** What came of [install]: [installed] when the folder got this version, else why not. */
+    data class Outcome(val installed: Boolean, val note: String)
 
     /** The bundled addon's version, from its .toc. */
     fun version(context: Context): String? = runCatching {
@@ -21,32 +29,40 @@ object AddonInstaller {
         }
     }.getOrNull()
 
-    /**
-     * Installs where needed (root, so call off the UI thread). Returns how many places
-     * got this version, or null when it couldn't be done.
-     */
-    fun install(context: Context): Int? {
-        val version = version(context) ?: return null
+    /** Installs where needed (root, so call off the UI thread). */
+    fun install(context: Context): Outcome {
+        val version = version(context) ?: return Outcome(false, "the app has no addon in it")
         val dir = File(context.cacheDir, "addon/$NAME").apply { deleteRecursively(); mkdirs() }
         val files = context.assets.list(NAME).orEmpty()
         for (f in files) context.assets.open("$NAME/$f").use { input -> File(dir, f).outputStream().use { input.copyTo(it) } }
-        if (files.isEmpty()) return null
+        if (files.isEmpty()) return Outcome(false, "the app has no addon in it")
         val q = RootShell::quote
-        // The Download folder is made only when Thor Forever's folder is there.
-        val script = """
-            exec 2>/dev/null
-            T=/sdcard/Download/Thor-Forever; [ -d "${'$'}T" ] && mkdir -p "${'$'}T/AddOns"
-            n=0
-            for AD in ${TARGETS.joinToString(" ")}; do
-              [ -d "${'$'}AD" ] || continue
-              D="${'$'}AD/$NAME"
-              grep -qx ${q("## Version: $version")} "${'$'}D/$NAME.toc" 2>/dev/null && continue
-              mkdir -p "${'$'}D" && cp -f ${q(dir.absolutePath)}/* "${'$'}D/" || continue
-              n=${'$'}((n + 1))
+        val script = File(context.cacheDir, "addon/install.sh")
+        val out = File(context.cacheDir, "addon/result.txt").apply { delete() }
+        val uid = android.os.Process.myUid()
+        // The first name for shared storage under which Thor Forever's folder shows up.
+        script.writeText("""
+            for S in ${STORAGE.joinToString(" ")}; do
+              T="${'$'}S/$KIT"
+              [ -d "${'$'}T" ] || continue
+              D="${'$'}T/AddOns/$NAME"
+              if grep -qx ${q("## Version: $version")} "${'$'}D/$NAME.toc" 2>/dev/null; then echo "same ${'$'}T"; exit 0; fi
+              mkdir -p "${'$'}D" && cp -f ${q(dir.absolutePath)}/* "${'$'}D/" || { echo "failed ${'$'}T"; exit 0; }
+              # Written straight into the storage's own folder: same owner as the folder around it.
+              case "${'$'}S" in /data/*) chown -R "${'$'}(stat -c %u:%g "${'$'}T")" "${'$'}T/AddOns" ;; esac
+              grep -qx ${q("## Version: $version")} "${'$'}D/$NAME.toc" && echo "installed ${'$'}T" || echo "failed ${'$'}T"
+              exit 0
             done
-            echo "installed:${'$'}n"
-        """.trimIndent()
-        val out = RootShell.exec(script) ?: return null
-        return out.substringAfter("installed:", "").trim().toIntOrNull()
+            echo "missing"
+        """.trimIndent() + "\n")
+        RootShell.exec("sh ${q(script.absolutePath)} > ${q(out.absolutePath)} 2>&1; chown $uid:$uid ${q(out.absolutePath)}")
+            ?: return Outcome(false, "the Thor's root service isn't reachable")
+        val result = runCatching { out.readText().trim().lines().lastOrNull().orEmpty() }.getOrDefault("")
+        return when {
+            result.startsWith("installed") -> Outcome(true, "Put the Forever Companion addon $version into Download/Thor-Forever/AddOns; the game gets it at its next start.")
+            result.startsWith("same") -> Outcome(false, "")
+            result == "missing" -> Outcome(false, "Couldn't find Download/Thor-Forever, so the addon $version wasn't put there.")
+            else -> Outcome(false, "Couldn't put the addon $version into Download/Thor-Forever/AddOns (${result.ifEmpty { "no answer" }}).")
+        }
     }
 }

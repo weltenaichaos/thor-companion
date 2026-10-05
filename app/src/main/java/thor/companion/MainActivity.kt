@@ -256,11 +256,8 @@ class MainActivity : Activity() {
         // The addon that came with this app goes into the game (once per start of the app).
         if (!addonChecked) {
             addonChecked = true
-            val n = AddonInstaller.install(this)
-            val v = AddonInstaller.version(this)
-            if (n != null && n > 0) runOnUiThread {
-                say("Put the Forever Companion addon $v into Thor Forever's AddOns folder; the game gets it at its next start.", notice = true)
-            }
+            val outcome = AddonInstaller.install(this)
+            if (outcome.note.isNotEmpty()) runOnUiThread { say(outcome.note, notice = true) }
         }
         var misses = 0
         var seenSquare = false
@@ -358,7 +355,7 @@ class MainActivity : Activity() {
             if (!addonWarned && bundled != null && parsed.addonVersion != bundled) {
                 addonWarned = true
                 say("The game is running an older Forever Companion addon (${parsed.addonVersion ?: "an old version"}); " +
-                    "this app has $bundled. Copy the new one into the game's AddOns folder and restart the game.", notice = true)
+                    "this app has $bundled. Close the game and start it again to get the new one.", notice = true)
             }
             // Bags kept from before a restart are right when the addon's checksum of its last bags says so.
             val kept = lastMessages["TB1|"]

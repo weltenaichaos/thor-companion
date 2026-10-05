@@ -35,6 +35,9 @@ import thor.companion.strip.LevelPlan
 import thor.companion.strip.PartAssembler
 import thor.companion.strip.Quest
 import thor.companion.strip.QuestLog
+import thor.companion.strip.QuestPages
+import thor.companion.strip.SpellPlan
+import thor.companion.strip.SpellToLearn
 import thor.companion.strip.StripDecoder
 import thor.companion.strip.Trail
 import thor.companion.strip.ZoneMap
@@ -90,6 +93,11 @@ class MainActivity : Activity() {
     private var mapTitle: TextView? = null
     private lateinit var scroll: ScrollView
     private var quests: QuestLog? = null
+    /** The quest log's first page (TL1) and its other pages (TL2): [quests] is all of them. */
+    private var questFirst: QuestLog? = null
+    private val questPages = QuestPages()
+    /** Class spells to learn soon (TV1), for the level card. */
+    private var spells: SpellPlan? = null
     private var chatTab = ChatTab.ALL
     /** Per chat tab, the number of the last line seen there (see ChatLog.total). */
     private val chatSeen = HashMap<ChatTab, Int>()
@@ -233,7 +241,8 @@ class MainActivity : Activity() {
                 m.startsWith("TM1|") -> zoneMap = ZoneMap.parse(m)
                 m.startsWith("TP1|") -> character = CharacterInfo.parse(m)
                 m.startsWith("TQ1|") -> gear = Gear.parse(m).orEmpty()
-                m.startsWith("TL1|") -> quests = QuestLog.parse(m)
+                m.startsWith("TL1|") -> { questFirst = QuestLog.parse(m); quests = questFirst }
+                m.startsWith("TV1|") -> spells = SpellPlan.parse(m)
                 else -> GameState.parse(m, state)?.let { state = it }
             }
         }
@@ -297,7 +306,16 @@ class MainActivity : Activity() {
                     }
                     message.startsWith("TU1|") -> ItemUse.parse(message)?.let { runOnUiThread { onUse(it) } }
                     message.startsWith("TC2|") -> Cooldowns.parse(message)?.let { runOnUiThread { onCooldowns(it) } }
-                    message.startsWith("TL1|") -> QuestLog.parse(message)?.let { runOnUiThread { onQuests(it) } }
+                    message.startsWith("TL1|") -> QuestLog.parse(message)?.let {
+                        questFirst = it
+                        val all = questPages.whole(it)
+                        runOnUiThread { onQuests(all) }
+                    }
+                    message.startsWith("TL2|") -> if (questPages.add(message) == true) questFirst?.let {
+                        val all = questPages.whole(it)
+                        runOnUiThread { onQuests(all) }
+                    }
+                    message.startsWith("TV1|") -> SpellPlan.parse(message)?.let { runOnUiThread { onSpells(it) } }
                     message.startsWith("TT1|") -> ItemTips.parse(message)?.let { tips.addAll(it) }
                     page != null -> {
                         val changed = names.addAll(page)
@@ -513,6 +531,13 @@ class MainActivity : Activity() {
             "nouse" -> "$label can't be used: it does nothing when used (long-press it for details)"
             else -> "Couldn't use $label: ${use.result}"
         })
+    }
+
+    private fun onSpells(plan: SpellPlan) {
+        connected()
+        if (plan == spells) return
+        spells = plan
+        if (panel == Panel.QUESTS || panel == Panel.CHARACTER) render()
     }
 
     private fun onQuests(log: QuestLog) {
@@ -1042,7 +1067,72 @@ class MainActivity : Activity() {
             else -> ""
         }
         if (advice.isNotEmpty()) box.addView(line(advice, Theme.GOOD, 15f, bold = true).apply { setPadding(0, dp(6), 0, 0) })
+        spellsChip()?.let { box.addView(it, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(10) }) }
         return box
+    }
+
+    /** "✦ 1 spell ready at your trainer · 2 at level 15", or null when there is nothing to learn soon. */
+    private fun spellsChip(): View? {
+        val plan = spells?.takeIf { it.spells.isNotEmpty() } ?: return null
+        fun count(n: Int) = if (n == 1) "1 spell" else "$n spells"
+        val parts = mutableListOf<String>()
+        if (plan.ready.isNotEmpty()) parts += "${count(plan.ready.size)} ready at your trainer"
+        plan.later.entries.firstOrNull()?.let { (level, list) ->
+            parts += if (parts.isEmpty()) "${count(list.size)} at level $level" else "${list.size} at level $level"
+        }
+        return chip("✦ " + parts.joinToString(" · ")) { showSpells() }.apply {
+            setTextColor(ACCENT)
+            background = Theme.box(context, RAISED, 18, ACCENT)
+        }
+    }
+
+    /** The spells to learn soon, under the list like an item's details; ✕ or a tap closes it. */
+    private fun showSpells() {
+        val plan = spells ?: return
+        footer.removeAllViews()
+        val box = card().apply { background = Theme.box(context, RAISED, 14, ACCENT) }
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        top.addView(line("Spells to learn", TEXT, 16f, bold = true).apply { setPadding(0, 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(line("✕", DIM, 18f).apply { setPadding(dp(12), 0, 0, 0) })
+        box.addView(top)
+        fun section(title: String, colour: Int) {
+            box.addView(line(title.uppercase(Locale.US), colour, 12f, bold = true).apply {
+                letterSpacing = 0.06f
+                setPadding(0, dp(10), 0, dp(2))
+            })
+        }
+        fun spell(s: SpellToLearn) {
+            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            val name = android.text.SpannableStringBuilder(s.name)
+            if (s.rank.isNotEmpty()) {
+                val start = name.length
+                name.append("  ").append(s.rank)
+                name.setSpan(android.text.style.ForegroundColorSpan(DIM), start, name.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                name.setSpan(android.text.style.RelativeSizeSpan(0.85f), start, name.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            r.addView(line("", TEXT, 14f).apply { text = name; setPadding(0, dp(3), 0, dp(3)) }, LinearLayout.LayoutParams(0, -2, 1f))
+            r.addView(line("", DIM, 13f).apply {
+                text = if (s.cost > 0) coins(s.cost) else "cost after a trainer visit"
+                setPadding(dp(8), dp(3), 0, dp(3))
+            })
+            box.addView(r)
+        }
+        if (plan.ready.isNotEmpty()) {
+            section("Ready now at your trainer", Theme.GOOD)
+            plan.ready.forEach { spell(it) }
+        }
+        for ((level, list) in plan.later) {
+            section("Level $level", DIM)
+            list.forEach { spell(it) }
+        }
+        if (plan.readyCost > 0) {
+            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(8), 0, 0) }
+            r.addView(line("Ready now costs", DIM, 14f).apply { setPadding(0, 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+            r.addView(line("", TEXT, 14f, bold = true).apply { text = coins(plan.readyCost); setPadding(0, 0, 0, 0) })
+            box.addView(r)
+        }
+        box.setOnClickListener { footer.removeAllViews() }
+        footer.addView(box, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
     }
 
     /** An item's details under the list, after a long-press on it; a tap closes them. */
@@ -1515,7 +1605,7 @@ class MainActivity : Activity() {
         /** Message kinds kept across restarts. */
         /** How long a message in the status line stays before "Connected" replaces it. */
         const val NOTICE_MS = 6000L
-        val KEPT = setOf("TS1|", "TB1|", "TM1|", "TP1|", "TQ1|", "TL1|")
+        val KEPT = setOf("TS1|", "TB1|", "TM1|", "TP1|", "TQ1|", "TL1|", "TV1|")
         /** The paper doll's slots, left column then right, as Character.lua sends them. */
         val GEAR_SLOTS = listOf(1, 2, 3, 15, 5, 4, 19, 9, 10, 6, 7, 8, 11, 12, 13, 14, 16, 17)
     }

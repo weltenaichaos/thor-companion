@@ -65,4 +65,21 @@ class QuestsTest {
         assertFalse(p.questsEnough)
         assertTrue(LevelPlan.of(10000, 12300, 0, 185, 5400)!!.questsEnough)
     }
+
+    @Test
+    fun putsThePagesTogether() {
+        val first = QuestLog.parse("TL1|0|1|500|3\n1\tz\t100\tOne\t\t10\t\n2\tr\t500\tTwo\t\t10\t")!!
+        assertEquals(3, first.pages)
+        val pages = QuestPages()
+        assertEquals(2, pages.whole(first).quests.size)
+        assertTrue(pages.add("TL2|2|3\n3\to\t100\tThree\t\t11\t")!!)
+        assertFalse(pages.add("TL2|2|3\n3\to\t100\tThree\t\t11\t")!!)
+        pages.add("TL2|3|3\n4\to\t100\tFour\t\t12\t\n2\tr\t500\tTwo\t\t10\t")
+        assertEquals(listOf(1, 2, 3, 4), pages.whole(first).quests.map { it.id })
+        // The log got shorter: page 3 no longer counts.
+        val shorter = QuestLog.parse("TL1|0|1|500|2\n1\tz\t100\tOne\t\t10\t")!!
+        assertEquals(listOf(1, 3), pages.whole(shorter).quests.map { it.id })
+        assertEquals(1, QuestLog.parse("TL1|0|0|0\n")!!.pages)
+        assertNull(pages.add("TL1|0|0|0"))
+    }
 }

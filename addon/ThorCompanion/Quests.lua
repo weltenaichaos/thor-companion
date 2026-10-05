@@ -1,11 +1,11 @@
 -- Quests.lua
 -- The app's Quests tab and its level checker on the Character tab:
---   TL1|lastKill|readyCount|readyXP<newline><questID><tab><state><tab><xp><tab><title><tab><objective>;<objective>...<tab><level><tab><waypoint><newline>...
+--   TL1|lastKill|readyCount|readyXP|pages<newline><questID><tab><state><tab><xp><tab><title><tab><objective>;<objective>...<tab><level><tab><waypoint><newline>...
 -- lastKill is the experience the last kill gave without its rested bonus (0 until
 -- there was one), readyCount and readyXP count all quests ready to turn in and the
 -- experience they give. <state> is r (ready to turn in), z (in this zone) or o
--- (elsewhere); quests in this zone come first, and the list is cut when it is too
--- long for the square. Objectives are the game's own text, like "4/8 Boar Ribs".
+-- (elsewhere); quests in this zone come first. A log too long for one square goes
+-- out in pages: the rest as TL2 (see below), <pages> says how many there are. Objectives are the game's own text, like "4/8 Boar Ribs".
 -- <level> is the quest's level (0 when unknown), for the colour of its title.
 -- <waypoint> is where the game's own arrow points next, "mapID:x:y:zone" (empty
 -- when the game doesn't say): for a quest ready to turn in that is whoever takes it,
@@ -94,7 +94,11 @@ local function waypoint(id)
     return string.format("%d:%.3f:%.3f:%s", mapID, x, y, clean(info and info.name, 24))
 end
 
-function ns.QuestsPayload()
+-- The whole log, cut into pages that fit the square: page 1 goes out as TL1 (with the
+-- level checker's numbers), the others as
+--   TL2|<page>|<pages><newline><quest rows like TL1's>...
+-- Quests in this zone come first.
+local function build()
     local here, elsewhere = {}, {}
     local readyCount, readyXP = 0, 0
     for i = 1, C_QuestLog.GetNumQuestLogEntries() or 0 do
@@ -120,16 +124,45 @@ function ns.QuestsPayload()
             if state == "o" then elsewhere[#elsewhere + 1] = entry else here[#here + 1] = entry end
         end
     end
-    local head = string.format("TL1|%d|%d|%d", ThorCompanionKill or 0, readyCount, readyXP)
-    local room = ns.StripCapacity() - #head
-    local out, used = {}, 0
+    local pages, page, used = {}, {}, 0
+    local room = ns.StripCapacity() - 40   -- room for either head
     for _, list in ipairs({ here, elsewhere }) do
         for _, e in ipairs(list) do
-            if used + #e + 1 <= room then
-                out[#out + 1] = e
+            if #page > 0 and used + #e + 1 > room then
+                pages[#pages + 1] = page
+                page, used = {}, 0
+            end
+            if #e + 1 <= room then
+                page[#page + 1] = e
                 used = used + #e + 1
             end
         end
     end
-    return head .. (#out > 0 and ("\n" .. table.concat(out, "\n")) or "")
+    pages[#pages + 1] = page
+    return string.format("TL1|%d|%d|%d|%d", ThorCompanionKill or 0, readyCount, readyXP, #pages), pages
+end
+
+function ns.QuestsPayload()
+    local head, pages = build()
+    return head .. (#pages[1] > 0 and ("\n" .. table.concat(pages[1], "\n")) or "")
+end
+
+-- The next page after the first that the app hasn't had twice since it changed, or nil.
+local sentPage, sentCount = {}, {}
+function ns.QuestPagesPayload()
+    local _, pages = build()
+    for n = 2, #pages do
+        local p = "TL2|" .. n .. "|" .. #pages .. "\n" .. table.concat(pages[n], "\n")
+        if p ~= sentPage[n] then sentPage[n], sentCount[n] = p, 0 end
+        if sentCount[n] < 2 then
+            sentCount[n] = sentCount[n] + 1
+            return p
+        end
+    end
+    return nil
+end
+
+-- Every page again (a refresh, or an app that just started).
+function ns.QuestPagesAgain()
+    sentPage, sentCount = {}, {}
 end

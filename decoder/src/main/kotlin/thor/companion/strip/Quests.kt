@@ -52,28 +52,56 @@ data class Objective(val text: String, val done: Boolean)
 
 /**
  * The quest log from the addon's
- * `TL1|lastKill|readyCount|readyXP\n<id>\t<r|z|o>\t<xp>\t<title>\t<objective>;<objective>...\t<level>\t<waypoint>`
+ * `TL1|lastKill|readyCount|readyXP|pages\n<id>\t<r|z|o>\t<xp>\t<title>\t<objective>;<objective>...\t<level>\t<waypoint>`
  * (see addon/ThorCompanion/Quests.lua). [lastKill] is the experience of the last kill
  * without its rested bonus, 0 when not known yet. The ready numbers cover the whole
- * log, also quests that did not fit in the message.
+ * log. A log too long for one message comes in [pages]: this is page 1, the others
+ * arrive as TL2 (see [QuestPages]).
  */
-data class QuestLog(val lastKill: Long, val readyCount: Int, val readyXp: Long, val quests: List<Quest>) {
+data class QuestLog(val lastKill: Long, val readyCount: Int, val readyXp: Long, val quests: List<Quest>, val pages: Int = 1) {
     companion object {
         fun parse(payload: String): QuestLog? {
             if (!payload.startsWith("TL1|")) return null
             val rows = payload.substring(4).split('\n')
             val head = rows[0].split('|')
             if (head.size < 3) return null
-            val quests = rows.drop(1).mapNotNull { row ->
-                val f = row.split('\t', limit = 7)
-                if (f.size < 4) return@mapNotNull null
-                val objectives = f.getOrNull(4).orEmpty().split(';').filter { it.isNotEmpty() }
-                    .map { if (it.startsWith("+")) Objective(it.substring(1), true) else Objective(it, false) }
-                Quest(f[0].toIntOrNull() ?: return@mapNotNull null, f[1] == "r", f[1] != "o", f[2].toLongOrNull() ?: 0, f[3], objectives,
-                    f.getOrNull(5)?.trim()?.toIntOrNull() ?: 0, Waypoint.parse(f.getOrNull(6)))
-            }
-            return QuestLog(head[0].toLongOrNull() ?: 0, head[1].toIntOrNull() ?: 0, head[2].toLongOrNull() ?: 0, quests)
+            return QuestLog(head[0].toLongOrNull() ?: 0, head[1].toIntOrNull() ?: 0, head[2].toLongOrNull() ?: 0, rows(rows.drop(1)),
+                head.getOrNull(3)?.toIntOrNull()?.coerceAtLeast(1) ?: 1)
         }
+
+        internal fun rows(rows: List<String>): List<Quest> = rows.mapNotNull { row ->
+            val f = row.split('\t', limit = 7)
+            if (f.size < 4) return@mapNotNull null
+            val objectives = f.getOrNull(4).orEmpty().split(';').filter { it.isNotEmpty() }
+                .map { if (it.startsWith("+")) Objective(it.substring(1), true) else Objective(it, false) }
+            Quest(f[0].toIntOrNull() ?: return@mapNotNull null, f[1] == "r", f[1] != "o", f[2].toLongOrNull() ?: 0, f[3], objectives,
+                f.getOrNull(5)?.trim()?.toIntOrNull() ?: 0, Waypoint.parse(f.getOrNull(6)))
+            }
+    }
+}
+
+/**
+ * The quest log's further pages, from the addon's `TL2|<page>|<pages>\n<rows like TL1's>`,
+ * put together with the first page (TL1) into the whole log.
+ */
+class QuestPages {
+    private val pages = HashMap<Int, List<Quest>>()
+
+    /** Keeps the page in [payload]; true when it changed. Null when it isn't a TL2 message. */
+    fun add(payload: String): Boolean? {
+        if (!payload.startsWith("TL2|")) return null
+        val rows = payload.substring(4).split('\n')
+        val head = rows[0].split('|')
+        val page = head.getOrNull(0)?.toIntOrNull() ?: return false
+        val quests = QuestLog.rows(rows.drop(1))
+        return pages.put(page, quests) != quests
+    }
+
+    /** [first] with the quests of its other pages after its own, each quest once. */
+    fun whole(first: QuestLog): QuestLog {
+        if (first.pages <= 1) return first
+        val all = first.quests + (2..first.pages).flatMap { pages[it].orEmpty() }
+        return first.copy(quests = all.distinctBy { it.id })
     }
 }
 

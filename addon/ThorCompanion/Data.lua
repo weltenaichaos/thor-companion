@@ -15,7 +15,7 @@
 --   TH1|...                                                   (new chat lines, see Chat.lua)
 --   TM1|...                                                   (places on the zone map, see Map.lua)
 --   TP1|... and TQ1|...                                       (character and gear, see Character.lua)
---   TL1|...                                                   (quest log and last kill, see Quests.lua)
+--   TL1|... and TL2|...                                       (quest log and last kill, see Quests.lua)
 --   TV1|...                                                   (spells to learn soon, see Spells.lua)
 --   TT1|...                                                   (item tooltips, when nothing else is waiting, see Tooltips.lua)
 --   TD1|...                                                   (a small change to TB1, TM1, TP1, TQ1 or TL1, see below)
@@ -202,7 +202,7 @@ local function cooldowns()
     return cooldownPayload
 end
 
-local kinds = { status, bags, namesPayload, chat, map, ns.CharacterPayload, ns.GearPayload, ns.QuestsPayload, cooldowns, ns.SpellsPayload }
+local kinds = { status, bags, namesPayload, chat, map, ns.CharacterPayload, ns.GearPayload, ns.QuestsPayload, cooldowns, ns.SpellsPayload, ns.QuestPagesPayload }
 local lastSent = {}
 
 -- Small changes to a long message (a looted item, a quest objective) go out as
@@ -301,9 +301,9 @@ local function nextMessage()
             and GetTime() - statusAt < MOVE_SECONDS then
             p = lastSent[1]
         end
-        -- The chat says itself when it has lines to send (each goes out twice, and the
-        -- second time can look just like the first).
-        if p and (p ~= lastSent[turn] or turn == 4) then
+        -- The chat and the quest pages say themselves when they have something to send
+        -- (each goes out twice, and the second time can look just like the first).
+        if p and (p ~= lastSent[turn] or turn == 4 or turn == 11) then
             if turn == 1 then statusAt = GetTime() end
             if turn == 5 then mapAt, mapID = GetTime(), p:match("^TM1|(%d+)") end
             lastSent[turn] = p
@@ -324,6 +324,7 @@ end
 function ns.SendAllAgain()
     lastSent, chatAgain, sentCount, known = {}, true, {}, {}
     ns.TooltipsAgain()
+    ns.QuestPagesAgain()
 end
 
 local refreshOwner = CreateFrame("Frame")
@@ -377,7 +378,7 @@ f:SetScript("OnEvent", function()
         -- busy setting up the zone then, and asking it things is better left alone.
         if loading or GetTime() < quietUntil then return end
         ticks = ticks + 1
-        if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain, known = {}, true, {} end
+        if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain, known = {}, true, {} ns.QuestPagesAgain() end
         if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
         if ticks % MAP_REFRESH_TICKS == 0 then lastSent[5], known[5] = nil, nil end
         -- What came of a tap goes out at once; whatever it cut short is sent again.

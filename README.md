@@ -37,6 +37,10 @@ later on will be one key press per tap.
    The Quests tab lists your quest log, and a level checker (also on the Character tab)
    shows the experience to the next level, rested experience, how many kills that is
    at the last kill's experience, and what the quests ready to turn in give.
+   The whole quest log is shown: a long one comes in several pages (TL1, then TL2).
+   A chip on the level card says which class spells you can learn now at your trainer
+   and at the next levels; tapping it shows them with the trainer's prices (known
+   once you have opened your class trainer).
    Quests show their level in the game's colours and, in this zone, how many yards
    away they are, nearest first. Tapping one selects it: a white ring on its places,
    the map zooms to show you and the nearest one, and a line above the map keeps the

@@ -272,10 +272,11 @@ class MainActivity : Activity() {
             val n = AddonInstaller.install(this)
             val v = AddonInstaller.version(this)
             if (n != null && n > 0) runOnUiThread {
-                say("Put the Forever Companion addon $v into the game. Type /reload in the game (or restart it) to load it.", notice = true)
+                say("Put the Forever Companion addon $v into Thor Forever's AddOns folder; the game gets it at its next start.", notice = true)
             }
         }
         var misses = 0
+        var seenSquare = false
         var near = -1
         val assembler = PartAssembler()
         while (worker === Thread.currentThread()) {
@@ -289,6 +290,7 @@ class MainActivity : Activity() {
             }
             if (frame != null) {
                 misses = 0
+                seenSquare = true
                 frameAt = SystemClock.uptimeMillis()
                 near = frame.row
                 // A small change (TD1) becomes the whole message again, from the last one the app kept.
@@ -337,10 +339,17 @@ class MainActivity : Activity() {
             // While you walk the position changes all the time: look more often, so the
             // arrow on the map keeps up, and slow down again once you stand still.
             val walking = SystemClock.uptimeMillis() - movedAt < 3000
+            // While the square isn't there (the game starting, the character screen, a
+            // loading screen) the app leaves the game's screen alone: taking screenshots
+            // of it then crashed the game as it loaded into the world. After the square
+            // goes away it waits a while, then looks only now and then until it is back.
             val period = when {
+                frame == null && !seenSquare -> 10_000L
+                frame == null && misses <= 2 -> 1000L
+                frame == null && misses == 3 -> 30_000L
+                frame == null -> 5000L
                 fast -> 200L
                 walking -> 400L
-                misses > 30 -> 3000L
                 else -> 1000L
             }
             SystemClock.sleep((period - (SystemClock.uptimeMillis() - t0)).coerceIn(30, period))

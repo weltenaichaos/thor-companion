@@ -4,18 +4,15 @@ import android.content.Context
 import java.io.File
 
 /**
- * Puts the addon that came with this app into the game, so app and addon always
- * match. It goes to both places it is read from on the Thor: Thor Forever's AddOns
- * folder in Download (the launcher copies it into the game at every start) and the
- * game's own Interface\AddOns. Only where the folder exists and holds another
- * version; the folder name stays ThorCompanion, so the addon keeps its settings.
+ * Puts the addon that came with this app where the game gets it from, so app and
+ * addon always match: Thor Forever's AddOns folder in Download, which its launcher
+ * copies into the game at every start. Only when that folder holds another version;
+ * the folder name stays ThorCompanion, so the addon keeps its settings. The game's
+ * own folders are left to the launcher.
  */
 object AddonInstaller {
     private const val NAME = "ThorCompanion"
-    private val TARGETS = listOf(
-        "/sdcard/Download/Thor-Forever/AddOns",
-        "/data/user/0/com.ludashi.aibench/files/usr/home/thor-forever/*/game/_classic_beta_/Interface/AddOns",
-    )
+    private val TARGETS = listOf("/sdcard/Download/Thor-Forever/AddOns")
 
     /** The bundled addon's version, from its .toc. */
     fun version(context: Context): String? = runCatching {
@@ -45,9 +42,6 @@ object AddonInstaller {
               D="${'$'}AD/$NAME"
               grep -qx ${q("## Version: $version")} "${'$'}D/$NAME.toc" 2>/dev/null && continue
               mkdir -p "${'$'}D" && cp -f ${q(dir.absolutePath)}/* "${'$'}D/" || continue
-              chown -R "${'$'}(stat -c %u:%g "${'$'}AD")" "${'$'}D" 2>/dev/null
-              chmod 755 "${'$'}D"; chmod 644 "${'$'}D"/*
-              restorecon -R "${'$'}D" 2>/dev/null
               n=${'$'}((n + 1))
             done
             echo "installed:${'$'}n"

@@ -49,8 +49,12 @@ later on will be one key press per tap.
    quests update sooner; changed bags go before everything else. The map arrow glides
    between positions instead of jumping.
    **The app installs the addon:** the APK carries the addon, and at start the app puts
-   that version into Thor Forever's Download/Thor-Forever/AddOns folder and the game's
-   Interface\AddOns (where they exist and hold another version). Type /reload in the game.
+   that version into Thor Forever's Download/Thor-Forever/AddOns folder (when it holds
+   another version); the launcher copies it into the game at the next start.
+   While the square isn't on the screen (the game starting, the character screen, a
+   loading screen) the app reads the game's screen only every 10 seconds (30 seconds
+   right after the square went away, then every 5): screenshots taken while the game
+   loaded into the world crashed it.
 3. The **decoder** (`decoder/`) is plain Kotlin that the app uses. It is tested
    against a square drawn by the addon, upscaled and colour-shifted like on the Thor.
 

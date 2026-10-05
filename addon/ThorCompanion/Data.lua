@@ -16,6 +16,7 @@
 --   TM1|...                                                   (places on the zone map, see Map.lua)
 --   TP1|... and TQ1|...                                       (character and gear, see Character.lua)
 --   TL1|...                                                   (quest log and last kill, see Quests.lua)
+--   TV1|...                                                   (spells to learn soon, see Spells.lua)
 --   TT1|...                                                   (item tooltips, when nothing else is waiting, see Tooltips.lua)
 --   TD1|...                                                   (a small change to TB1, TM1, TP1, TQ1 or TL1, see below)
 -- and, for a few seconds after their keys, TW1 (zone picture, Map.lua) and TI1 (item icons, Icons.lua).
@@ -201,7 +202,7 @@ local function cooldowns()
     return cooldownPayload
 end
 
-local kinds = { status, bags, namesPayload, chat, map, ns.CharacterPayload, ns.GearPayload, ns.QuestsPayload, cooldowns }
+local kinds = { status, bags, namesPayload, chat, map, ns.CharacterPayload, ns.GearPayload, ns.QuestsPayload, cooldowns, ns.SpellsPayload }
 local lastSent = {}
 
 -- Small changes to a long message (a looted item, a quest objective) go out as

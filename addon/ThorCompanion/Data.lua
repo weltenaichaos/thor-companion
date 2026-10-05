@@ -339,12 +339,28 @@ end)
 
 local ticker
 local ticks = 0
+local loading, quietUntil = true, 0
+local loadEvents = CreateFrame("Frame")
+loadEvents:RegisterEvent("LOADING_SCREEN_ENABLED")
+loadEvents:RegisterEvent("LOADING_SCREEN_DISABLED")
+loadEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
+loadEvents:SetScript("OnEvent", function(_, event)
+    if event == "LOADING_SCREEN_ENABLED" then
+        loading = true
+    else
+        loading = false
+        quietUntil = GetTime() + 3
+    end
+end)
 local f = CreateFrame("Frame")
 f:RegisterEvent("PLAYER_LOGIN")
 f:SetScript("OnEvent", function()
     ThorCompanionDB = ThorCompanionDB or {}
     ns.StripShow(ThorCompanionDB.hidden ~= true)
     ticker = C_Timer.NewTicker(0.5, function()
+        -- Nothing while a loading screen is up, and for a moment after: the game is
+        -- busy setting up the zone then, and asking it things is better left alone.
+        if loading or GetTime() < quietUntil then return end
         ticks = ticks + 1
         if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain, known = {}, true, {} end
         if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
@@ -414,6 +430,9 @@ SlashCmdList.THORCOMPANION = function(msg)
         setting("cell", cell, 2, 8, "the cell size")
     elseif shadeStep then
         setting("shade", shadeStep, 4, 80, "the shade step")
+    elseif msg == "tips on" or msg == "tips off" then
+        ThorCompanionDB.tips = msg == "tips on"
+        print("|cff66ccffForever Companion|r item tooltips for the app " .. (msg == "tips on" and "on" or "off"))
     elseif msg == "chat channels on" or msg == "chat channels off" then
         ns.ChatChannels(msg == "chat channels on")
         print("|cff66ccffForever Companion|r public channels in the app's chat " .. (msg:sub(-2) == "on" and "on" or "off"))

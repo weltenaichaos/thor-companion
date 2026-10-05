@@ -4,7 +4,9 @@
 --   TT1|itemID<tab>line<tab>line...<newline>itemID<tab>...
 -- The name line is left out (the app has the name), and so is the sell price.
 -- Each item is sent once (the app keeps them) and only when nothing else is
--- waiting, a short message at a time, so the square stays calm. Out of combat only.
+-- waiting, a short message at a time, so the square stays calm. Out of combat
+-- only, and not in the first SETTLE seconds after a loading screen. `/thor tips off`
+-- stops it.
 
 local _, ns = ...
 
@@ -12,8 +14,17 @@ local MAX_LINES = 12
 local MAX_LINE = 60
 local ROOM_PARTS = 2      -- at most this many parts per message
 local GAP = 3             -- seconds between two tooltip messages
+local SETTLE = 30         -- seconds in the world before the first tooltip is read
 local sent = {}
 local lastAt = -100
+local inWorldAt
+
+local events = CreateFrame("Frame")
+events:RegisterEvent("PLAYER_ENTERING_WORLD")
+events:RegisterEvent("LOADING_SCREEN_ENABLED")
+events:SetScript("OnEvent", function(_, event)
+    inWorldAt = event == "PLAYER_ENTERING_WORLD" and GetTime() or nil
+end)
 
 local function secret(v)
     return issecretvalue and issecretvalue(v)
@@ -48,6 +59,8 @@ end
 
 -- The next tooltips the app has not been sent, or nil.
 function ns.TooltipsPayload()
+    if ThorCompanionDB and ThorCompanionDB.tips == false then return nil end
+    if not inWorldAt or GetTime() - inWorldAt < SETTLE then return nil end
     if InCombatLockdown() or GetTime() - lastAt < GAP then return nil end
     local room = ns.StripPartBytes() * ROOM_PARTS - 4
     local out, used = {}, 0

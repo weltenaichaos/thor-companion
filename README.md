@@ -80,6 +80,9 @@ when the game starts. In game:
   icons that come up by themselves (default on).
 - `/thor icons` shows the next page of item icons like the app's "Get icons" button.
 - `/thor hide` and `/thor show` turn the square off and on.
+- `/thor tips off` stops the item tooltips for the app (`on` turns them back on).
+  The addon sends nothing while a loading screen is up and for 3 seconds after, and
+  reads no tooltips in the first 30 seconds after one.
 - Public channels (General, Trade, ...) are in the app's Chat tab (General) with a write
   button each; `/thor chat channels off` leaves their lines out, `on` brings them back. Say, yell, emotes, whispers, party, raid, instance,
   guild and system lines are always sent. During boss fights the game hides chat from

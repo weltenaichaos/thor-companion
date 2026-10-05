@@ -41,7 +41,11 @@ later on will be one key press per tap.
    away they are, nearest first. Tapping one selects it: a white ring on its places,
    the map zooms to show you and the nearest one, and a line above the map keeps the
    yards up to date (✕ clears it). The zone's size in yards comes from the game, or
-   from walking around a little where the game doesn't say (`/thor map` shows which).
+   from walking around a little where the game doesn't say, from the world position or
+   from your running speed (`/thor map` shows which, and what it measured).
+   Each quest also carries where the game's own arrow points next ("mapID:x:y:zone"),
+   so a quest ready to turn in points at whoever takes it, and a quest whose next step
+   is in another zone says which zone.
    Long-press an item for its type, levels, sell price and what its tooltip says (stats,
    "Use: ..."; the addon sends tooltips only when nothing else is waiting). The Bags tab
    sorts by bag order, type, quality or value, and shows what your grey items sell for.

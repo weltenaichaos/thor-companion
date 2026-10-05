@@ -1,10 +1,29 @@
 package thor.companion.strip
 
 /** One quest in the log: ready to turn in, in this zone, the experience it gives and its objectives. */
+/** Where the game's own arrow points next for a quest: the turn-in once it is ready. */
+data class Waypoint(val mapId: Int, val x: Double, val y: Double, val zone: String) {
+    companion object {
+        /** From the addon's "mapID:x:y:zone", or null when it is empty or damaged. */
+        fun parse(field: String?): Waypoint? {
+            val f = field.orEmpty().split(':', limit = 4)
+            if (f.size < 3) return null
+            return Waypoint(
+                f[0].toIntOrNull() ?: return null,
+                f[1].toDoubleOrNull() ?: return null,
+                f[2].toDoubleOrNull() ?: return null,
+                f.getOrElse(3) { "" }.trim(),
+            )
+        }
+    }
+}
+
 data class Quest(
     val id: Int, val ready: Boolean, val here: Boolean, val xp: Long, val title: String, val objectives: List<Objective>,
     /** The quest's level, 0 when the addon didn't say. */
     val level: Int = 0,
+    /** Where to go next, also when that is in another zone; null when the game didn't say. */
+    val waypoint: Waypoint? = null,
 ) {
     /** How hard it is for you at [playerLevel], like the game's quest colours. */
     fun difficulty(playerLevel: Int): Difficulty = when {
@@ -33,7 +52,7 @@ data class Objective(val text: String, val done: Boolean)
 
 /**
  * The quest log from the addon's
- * `TL1|lastKill|readyCount|readyXP\n<id>\t<r|z|o>\t<xp>\t<title>\t<objective>;<objective>...\t<level>`
+ * `TL1|lastKill|readyCount|readyXP\n<id>\t<r|z|o>\t<xp>\t<title>\t<objective>;<objective>...\t<level>\t<waypoint>`
  * (see addon/ThorCompanion/Quests.lua). [lastKill] is the experience of the last kill
  * without its rested bonus, 0 when not known yet. The ready numbers cover the whole
  * log, also quests that did not fit in the message.
@@ -46,12 +65,12 @@ data class QuestLog(val lastKill: Long, val readyCount: Int, val readyXp: Long, 
             val head = rows[0].split('|')
             if (head.size < 3) return null
             val quests = rows.drop(1).mapNotNull { row ->
-                val f = row.split('\t', limit = 6)
+                val f = row.split('\t', limit = 7)
                 if (f.size < 4) return@mapNotNull null
                 val objectives = f.getOrNull(4).orEmpty().split(';').filter { it.isNotEmpty() }
                     .map { if (it.startsWith("+")) Objective(it.substring(1), true) else Objective(it, false) }
                 Quest(f[0].toIntOrNull() ?: return@mapNotNull null, f[1] == "r", f[1] != "o", f[2].toLongOrNull() ?: 0, f[3], objectives,
-                    f.getOrNull(5)?.trim()?.toIntOrNull() ?: 0)
+                    f.getOrNull(5)?.trim()?.toIntOrNull() ?: 0, Waypoint.parse(f.getOrNull(6)))
             }
             return QuestLog(head[0].toLongOrNull() ?: 0, head[1].toIntOrNull() ?: 0, head[2].toLongOrNull() ?: 0, quests)
         }

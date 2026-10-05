@@ -151,10 +151,11 @@ class MapView(context: Context) : View(context) {
             canvas.drawCircle(sx(place.x), sy(place.y), r, marked)
             if (place.kind == 'q' && !zoomed) canvas.drawText(short(place.label), sx(place.x), sy(place.y) + 4 * d, areaText)
         }
+        // Where the selected quest wants you: a white ring, and how far it is.
         targetNote?.let { (place, note) ->
-            if (note.isEmpty() || title == null) return@let
             val r = if (place.kind == 'q') (0.03 / shown * w).toFloat() else 13 * d
-            canvas.drawText(note, sx(place.x), sy(place.y) + r + 14 * d, distanceText)
+            canvas.drawCircle(sx(place.x), sy(place.y), r, marked)
+            if (note.isNotEmpty()) canvas.drawText(note, sx(place.x), sy(place.y) + r + 14 * d, distanceText)
         }
 
         if (px != null && py != null) {

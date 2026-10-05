@@ -28,6 +28,19 @@ class CompassTest {
     }
 
     @Test
+    fun theGamesOwnWaypointWins() {
+        val h = Compass.toQuest(zone, "Boar Ribs", 0.5, 0.5, Waypoint(1, 0.5, 0.8, "Z"))!!
+        assertEquals(0.8, h.place.y)
+        assertEquals(300, h.yards)
+    }
+
+    @Test
+    fun aWaypointInAnotherZoneIsLeftOut() {
+        val h = Compass.toQuest(zone, "Boar Ribs", 0.5, 0.5, Waypoint(99, 0.5, 0.8, "Other"))!!
+        assertEquals(0.2, h.place.y)
+    }
+
+    @Test
     fun noPlaceNoArrow() {
         assertNull(Compass.toQuest(zone, "Unknown", 0.5, 0.5))
     }

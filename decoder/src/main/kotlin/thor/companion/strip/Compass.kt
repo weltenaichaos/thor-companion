@@ -13,10 +13,14 @@ object Compass {
 
     /**
      * The nearest place of quest [title] on [zone] from [x], [y]: where to turn it in
-     * when it is ready (Q), else its objective areas (q) or where it starts (a).
+     * when it is ready (Q), else its objective areas (q) or where it starts (a). With
+     * [waypoint] (where the game's own arrow points), that place is used instead when
+     * it is in this zone, since it also knows turn-ins the map doesn't show.
      */
-    fun toQuest(zone: ZoneMap, title: String, x: Double, y: Double): Heading? {
-        val mine = zone.places.filter { it.kind in "qQa" && matches(it.label, title) }
+    fun toQuest(zone: ZoneMap, title: String, x: Double, y: Double, waypoint: Waypoint? = null): Heading? {
+        val here = waypoint?.takeIf { it.mapId == zone.mapId }
+        val mine = if (here != null) listOf(MapPlace('Q', here.x, here.y, title))
+            else zone.places.filter { it.kind in "qQa" && matches(it.label, title) }
         val pick = mine.filter { it.kind == 'Q' }.ifEmpty { mine }
         // Without the size, the zone maps are about 3:2.
         val w = if (zone.width > 0) zone.width.toDouble() else 1.5

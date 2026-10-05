@@ -34,6 +34,13 @@ class QuestsTest {
     }
 
     @Test
+    fun readsTheNextWaypoint() {
+        val log = QuestLog.parse("TL1|0|1|0\n2\tr\t100\tA\t\t20\t1420:0.512:0.631:Tirisfal Glades\n3\tz\t0\tB\t\t20\t")!!
+        assertEquals(Waypoint(1420, 0.512, 0.631, "Tirisfal Glades"), log.quests[0].waypoint)
+        assertNull(log.quests[1].waypoint)
+    }
+
+    @Test
     fun emptyLog() {
         assertEquals(QuestLog(0, 0, 0, emptyList()), QuestLog.parse("TL1|0|0|0"))
         assertNull(QuestLog.parse("TM1|1|2|3"))

@@ -884,7 +884,7 @@ class MainActivity : Activity() {
             return
         }
         // Nearest first, so the next thing to do is on top.
-        val near = log.quests.associateWith { heading(it.title) }
+        val near = log.quests.associateWith { heading(it) }
         fun byDistance(list: List<Quest>) = list.sortedBy { q -> near[q]?.let { h -> h.yards ?: 0 } ?: Int.MAX_VALUE }
         for ((title, list) in listOf("Ready to turn in" to byDistance(log.quests.filter { it.ready }),
             "In this zone" to byDistance(log.quests.filter { it.here && !it.ready }), "Elsewhere" to log.quests.filter { !it.here && !it.ready })) {
@@ -914,7 +914,14 @@ class MainActivity : Activity() {
         if (q.xp > 0) top.addView(line(String.format(Locale.US, "%,d XP", q.xp), Theme.XP_TEXT, 12f).apply { setPadding(dp(8), 0, 0, 0) })
         box.addView(top)
         if (q.ready) box.addView(line("Ready to turn in", Theme.GOOD, 12f).apply { setPadding(0, dp(2), 0, 0) })
-        if (h != null) box.addView(line(distance(h), if (selected) Color.WHITE else DIM, 12f).apply { setPadding(0, dp(2), 0, 0) })
+        val away = q.waypoint?.takeIf { it.mapId != state?.mapId }?.zone?.ifEmpty { null }
+        val where = when {
+            h != null && q.ready -> distance(h)
+            h != null -> distance(h)
+            away != null -> "In $away"
+            else -> null
+        }
+        if (where != null) box.addView(line(where, if (selected) Color.WHITE else DIM, 12f).apply { setPadding(0, dp(2), 0, 0) })
         for (o in q.objectives) {
             box.addView(line((if (o.done) "✓ " else "• ") + o.text, if (o.done) DIM else TEXT, 13f).apply { setPadding(dp(4), dp(1), 0, 0) })
         }
@@ -922,7 +929,7 @@ class MainActivity : Activity() {
             // Selects it: its places get a white ring on the map, which zooms to show you and the nearest one.
             tracked = q.title
             getPreferences(MODE_PRIVATE).edit().putString("tracked", q.title).apply()
-            val h = heading(q.title)
+            val h = heading(q)
             val x = state?.x; val y = state?.y
             if (h != null && x != null && y != null) {
                 val far = maxOf(Math.abs(h.place.x - x), Math.abs(h.place.y - y) * 1.5)
@@ -930,7 +937,12 @@ class MainActivity : Activity() {
                     .putFloat("mapSpan", (far * 2.6).coerceIn(MapView.MIN_SPAN, 1.0).toFloat()).apply()
             }
             show(Panel.MAP)
-            say(if (h == null) "${q.title}: not on this zone's map" else "${q.title}: marked with a white ring on the map")
+            val away = q.waypoint?.takeIf { it.mapId != state?.mapId }?.zone?.ifEmpty { null }
+            say(when {
+                h != null -> "${q.title}: marked with a white ring on the map"
+                away != null -> "${q.title}: the next step is in $away, not in this zone"
+                else -> "${q.title}: not on this zone's map"
+            })
         }
         return box
     }
@@ -938,20 +950,24 @@ class MainActivity : Activity() {
     /** The selected quest (the last one tapped in the Quests tab): a white ring on the map and its distance, until ✕. */
     private var tracked: String? = null
 
-    /** Where the nearest place of quest [title] is from you on this zone's map, or null. */
-    private fun heading(title: String): Compass.Heading? {
+    /** Where the nearest place of quest [q] is from you on this zone's map, or null. */
+    private fun heading(q: Quest?): Compass.Heading? {
+        if (q == null) return null
         val s = state
         val map = zoneMap?.takeIf { it.mapId == s?.mapId } ?: return null
         val x = s?.x ?: return null
         val y = s.y ?: return null
-        return if (x > 0) Compass.toQuest(map, title, x, y) else null
+        return if (x > 0) Compass.toQuest(map, q.title, x, y, q.waypoint) else null
     }
+
+    /** The quest with this title in the log, or null. */
+    private fun questOf(title: String?) = quests?.quests?.firstOrNull { it.title == title }
 
     /** "120 yd to the objective" for a quest, or null when it isn't on this map. */
     private fun distance(h: Compass.Heading): String {
         val what = when (h.place.kind) { 'Q' -> "to turn it in"; 'a' -> "to where it starts"; else -> "to the objective" }
         return when (val yd = h.yards) {
-            null -> "On the map ($what)"
+            null -> "On the map ($what); walk a bit and the yards appear"
             in 0..14 -> "You're there"
             else -> "$yd yd $what"
         }
@@ -964,9 +980,16 @@ class MainActivity : Activity() {
         val row = line.parent as? View
         if (title == null) { row?.visibility = View.GONE; mapView?.targetNote = null; return }
         row?.visibility = View.VISIBLE
-        val h = heading(title)
-        line.text = if (h == null) "$title  ·  not on this zone's map" else "$title  ·  ${distance(h)}"
+        val q = questOf(title)
+        val h = heading(q)
+        val away = q?.waypoint?.takeIf { it.mapId != state?.mapId }?.zone?.ifEmpty { null }
+        line.text = when {
+            h != null -> "$title  ·  ${distance(h)}"
+            away != null -> "$title  ·  go to $away"
+            else -> "$title  ·  not on this zone's map"
+        }
         mapView?.targetNote = h?.let { it.place to (it.yards?.let { yd -> if (yd < 15) "here" else "$yd yd" } ?: "") }
+        mapView?.highlight = title
         mapView?.invalidate()
     }
 

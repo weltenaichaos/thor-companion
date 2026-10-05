@@ -306,63 +306,109 @@ end
 
 -- The zone's size in yards from walking, when the game won't say it outright.
 -- Two ways, whichever the game allows: the world position (UnitPosition, in yards)
--- against the map position, or how far you ran (your speed in yards a second) against
--- how far you moved on the map. What it works out is kept per zone in the addon's
--- settings, so it only has to be done once.
-local last = nil
+-- against the map position, or how far you ran (your speed in yards a second, added
+-- up while you keep going the same way) against how far you got on the map. A single
+-- second of running is too little to tell on a big zone map, so both compare against
+-- where a run began. What it works out is kept per zone in the addon's settings, so it
+-- only has to be done once (later runs make it a little more exact).
+local RUN_SPEED = 7          -- yards a second, running on foot, when the game won't say the speed
+local FAR = 0.015            -- how far (of the map) a run must get before it counts
+local start, prev = nil, nil
 
-local function remember(mapID, w, h)
+local function remember(mapID, w)
+    if not w or w < 300 or w > 100000 then return end
     ThorCompanionDB.zoneSize = ThorCompanionDB.zoneSize or {}
     local known = ThorCompanionDB.zoneSize[mapID] or {}
-    if w and w > 500 and w < 100000 then known.w = math.floor(w + 0.5) end
-    if h and h > 500 and h < 100000 then known.h = math.floor(h + 0.5) end
-    -- One direction is enough: the game's zone maps are 3:2.
-    if known.w and not known.h then known.h = math.floor(known.w / 1.5 + 0.5) end
-    if known.h and not known.w then known.w = math.floor(known.h * 1.5 + 0.5) end
-    if known.w then
-        ThorCompanionDB.zoneSize[mapID] = known
-        sizeNote = string.format("measured %d x %d", known.w, known.h)
-    end
+    -- The average of the last few runs; the game's zone maps are 3:2.
+    local n = math.min((known.n or 0) + 1, 5)
+    local avg = known.w and (known.w * (n - 1) + w) / n or w
+    local first = not known.w
+    known.w, known.h, known.n = math.floor(avg + 0.5), math.floor(avg / 1.5 + 0.5), n
+    ThorCompanionDB.zoneSize[mapID] = known
+    sizeNote = string.format("measured %d x %d yards from %d run%s", known.w, known.h, n, n == 1 and "" or "s")
+    -- The app learns it with the next map message.
+    if first and ns.MapUrgent then ns.MapUrgent() end
+end
+
+local function angle(dx, dy)
+    return math.atan2(dy / 1.5, dx)
 end
 
 local function measureZone()
     local mapID = C_Map.GetBestMapForUnit("player")
-    local size = ThorCompanionDB and ThorCompanionDB.zoneSize and ThorCompanionDB.zoneSize[mapID]
-    if not mapID or (size and size.w) then last = nil return end
+    if not mapID then start, prev = nil, nil return end
+    local known = ThorCompanionDB.zoneSize and ThorCompanionDB.zoneSize[mapID]
+    if known and (known.n or 1) >= 5 then sizeNote = string.format("measured %d x %d yards", known.w, known.h) start = nil return end
     local pos = C_Map.GetPlayerMapPosition(mapID, "player")
-    if not pos then return end
+    if not pos then sizeNote = "no position on this map" start = nil return end
     local mx, my = pos:GetXY()
-    if not mx or secret(mx) or (mx == 0 and my == 0) then return end
+    if not mx or secret(mx) or (mx == 0 and my == 0) then sizeNote = "no position on this map" start = nil return end
     local speed = GetUnitSpeed and GetUnitSpeed("player")
-    if secret(speed) then speed = nil end
+    if type(speed) ~= "number" or secret(speed) then
+        -- Without the speed: on foot it is the running speed.
+        speed = (IsMounted and not IsMounted()) and not (UnitInVehicle and UnitInVehicle("player"))
+            and not (IsSwimming and IsSwimming()) and not (IsFlying and IsFlying()) and RUN_SPEED or nil
+        if speed and prev and prev.mx == mx and prev.my == my then speed = 0 end
+    end
     local wy, wx
     local okW, a, b = pcall(UnitPosition, "player")
     if okW and type(a) == "number" and type(b) == "number" and not secret(a) then wy, wx = a, b end
-    local now, prev = GetTime(), last
-    last = { mapID = mapID, mx = mx, my = my, wy = wy, wx = wx, speed = speed, at = now }
-    if not prev or prev.mapID ~= mapID then return end
-    local dx, dy = mx - prev.mx, my - prev.my
-    local dt = now - prev.at
-    if dt <= 0 or dt > 4 then return end
-    -- UnitPosition gives (y, x) with world x north and y west: the map's x runs
-    -- against world y, its y against world x.
-    if wy and prev.wy then
-        if math.abs(dx) > 0.004 then remember(mapID, math.abs((wy - prev.wy) / dx), nil) end
-        if math.abs(dy) > 0.004 then remember(mapID, nil, math.abs((wx - prev.wx) / dy)) end
+    local now = GetTime()
+    local here = { mapID = mapID, mx = mx, my = my, wy = wy, wx = wx, speed = speed, at = now }
+    local last = prev
+    prev = here
+    -- A new zone, a teleport or a long gap: start over from here.
+    if not last or last.mapID ~= mapID or now - last.at > 3 then start = nil end
+    if wy and start and start.wy then
+        -- The world position: exact, whichever way you went. World x runs north and
+        -- y west, so the map's x runs against world y and its y against world x.
+        local dx, dy = mx - start.mx, my - start.my
+        if math.abs(dx) >= FAR then
+            remember(mapID, math.abs((wy - start.wy) / dx))
+            start = here
+        elseif math.abs(dy) >= FAR then
+            remember(mapID, math.abs((wx - start.wx) / dy) * 1.5)
+            start = here
+        end
         return
     end
-    -- No world position: how far you ran, from your speed (yards a second).
-    if not speed or not prev.speed or speed <= 0 or math.abs(speed - prev.speed) > 0.2 then return end
-    local ran = speed * dt
-    local moved = math.sqrt(dx * dx + dy * dy)
-    if moved < 0.004 then return end
-    -- Only a run that is clearly along one direction says anything about that side.
-    if math.abs(dx) > 3 * math.abs(dy) then remember(mapID, ran / math.abs(dx), nil)
-    elseif math.abs(dy) > 3 * math.abs(dx) then remember(mapID, nil, ran / math.abs(dy)) end
+    if not speed or speed <= 0 then
+        sizeNote = known and string.format("measured %d x %d yards", known.w, known.h) or "run straight for a few seconds to measure"
+        start = nil
+        return
+    end
+    if not start or not last or math.abs(speed - (last.speed or -1)) > 0.2 then
+        start = here
+        start.ran = 0
+        return
+    end
+    -- Only a straight run counts: each second must go the same way as the run so far.
+    local sdx, sdy = mx - last.mx, my - last.my
+    local tdx, tdy = mx - start.mx, my - start.my
+    if (sdx ~= 0 or sdy ~= 0) and (tdx ~= sdx or tdy ~= sdy) then
+        local turn = math.abs(angle(sdx, sdy) - angle(tdx, tdy))
+        if turn > math.pi then turn = 2 * math.pi - turn end
+        if turn > 0.2 then
+            start = last
+            start.ran = 0
+        end
+    end
+    start.ran = (start.ran or 0) + speed * (now - last.at)
+    tdx, tdy = mx - start.mx, my - start.my
+    local moved = math.sqrt(tdx * tdx + (tdy / 1.5) * (tdy / 1.5))
+    sizeNote = string.format("measuring: ran %d yards", start.ran)
+    if moved >= FAR then
+        remember(mapID, start.ran / moved)
+        start = here
+        start.ran = 0
+    end
 end
 
 C_Timer.NewTicker(1, function()
-    if not InCombatLockdown() then pcall(measureZone) end
+    if not InCombatLockdown() and ThorCompanionDB then
+        local ok, err = pcall(measureZone)
+        if not ok then sizeNote = "measuring failed: " .. tostring(err) end
+    end
 end)
 
 -- The picture key, bound out of combat like the bag keys (and off with /thor taps off).

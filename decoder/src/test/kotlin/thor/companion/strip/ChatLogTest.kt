@@ -75,6 +75,18 @@ class ChatLogTest {
     }
 
     @Test
+    fun putsLateLinesInWritingOrder() {
+        val log = ChatLog()
+        // The party line (3) comes first, the older Trade line (2) after it.
+        log.add("TH1|5\t\t\n1\tsay\tA\t\tone\n3\tparty\tB\t\tthree")
+        log.add("TH1|5\t\t\n2\tchannel\tC\tTrade\ttwo\n3\tparty\tB\t\tthree")
+        assertEquals(listOf("one", "two", "three"), log.lines.map { it.text })
+        // A new session's lines come after the old one's, whatever their numbers.
+        log.add("TH1|9\t\t\n1\tsay\tA\t\tafter reload")
+        assertEquals("after reload", log.lines.last().text)
+    }
+
+    @Test
     fun ignoresOtherMessages() {
         assertNull(ChatLog().add("TS1|x|1|0|0|0|0"))
     }

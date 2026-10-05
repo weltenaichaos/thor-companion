@@ -261,9 +261,13 @@ for _, e in ipairs({ "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN", "ZONE
     mapEvents:RegisterEvent(e)
 end
 mapEvents:SetScript("OnEvent", function() mapUrgent = true end)
+function ns.MapUrgent() mapUrgent = true end
 
 -- Bags that changed (loot, a used item) go next, then the map after a quest or zone event.
 local bagsUrgent = false
+-- A new line from your group, a whisper or the guild goes before everything else.
+local chatUrgent = false
+function ns.ChatUrgent() chatUrgent = true end
 local bagEvents = CreateFrame("Frame")
 bagEvents:RegisterEvent("BAG_UPDATE_DELAYED")
 bagEvents:SetScript("OnEvent", function() bagsUrgent = true end)
@@ -271,7 +275,10 @@ bagEvents:SetScript("OnEvent", function() bagsUrgent = true end)
 local showingTurn
 local function nextMessage()
     local id = C_Map.GetBestMapForUnit("player")
-    if bagsUrgent then
+    if chatUrgent then
+        turn = 3  -- the chat (4) is next
+        chatUrgent = false
+    elseif bagsUrgent then
         turn = 1  -- the bags (2) are next
         bagsUrgent = false
     elseif mapUrgent or (id and tostring(id) ~= mapID) then
@@ -288,7 +295,9 @@ local function nextMessage()
             and GetTime() - statusAt < MOVE_SECONDS then
             p = lastSent[1]
         end
-        if p and p ~= lastSent[turn] then
+        -- The chat says itself when it has lines to send (each goes out twice, and the
+        -- second time can look just like the first).
+        if p and (p ~= lastSent[turn] or turn == 4) then
             if turn == 1 then statusAt = GetTime() end
             if turn == 5 then mapAt, mapID = GetTime(), p:match("^TM1|(%d+)") end
             lastSent[turn] = p

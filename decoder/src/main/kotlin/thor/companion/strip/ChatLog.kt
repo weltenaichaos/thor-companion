@@ -13,10 +13,15 @@ data class ChatLine(val kind: String, val sender: String, val text: String, val 
  * The chat lines the app has received, oldest first, from the addon's
  * `TH1|<session>\t<names>\t<channels>\n<id>\t<kind>\t<sender>\t<channel>\t<text>\n...` messages.
  * Lines sent again (after a refresh) are recognised by session and number and kept once.
+ * The addon may send a group line before an older Trade line; lines are kept in the
+ * order of their numbers, so the chat reads as it was written.
  */
 class ChatLog(private val keep: Int = 200) {
     private val seen = HashSet<String>()
     private val order = ArrayDeque<String>()
+    /** Per line, its place in writing order: the session's arrival rank, then its number. */
+    private val rank = ArrayDeque<Long>()
+    private val sessions = HashMap<String, Long>()
     private val _lines = ArrayDeque<ChatLine>()
     val lines: List<ChatLine> get() = _lines
 
@@ -54,13 +59,19 @@ class ChatLog(private val keep: Int = 200) {
             val f = row.split('\t', limit = 5)
             if (f.size < 5) continue
             val key = session + ":" + f[0]
+            val id = f[0].toLongOrNull() ?: continue
             if (!seen.add(key)) continue
-            order.addLast(key)
-            _lines.addLast(ChatLine(f[1], f[2], f[4], f[3]))
+            val r = sessions.getOrPut(session) { sessions.size.toLong() } * 1_000_000_000L + id
+            var at = rank.size
+            while (at > 0 && rank[at - 1] > r) at--
+            order.add(at, key)
+            rank.add(at, r)
+            _lines.add(at, ChatLine(f[1], f[2], f[4], f[3]))
             total++
             added = true
             if (_lines.size > keep) {
                 _lines.removeFirst()
+                rank.removeFirst()
                 seen.remove(order.removeFirst())
             }
         }

@@ -18,8 +18,10 @@
 local _, ns = ...
 
 local KEEP = 60          -- lines remembered
+local KEEP_CHANNEL = 20  -- of those, at most this many from public channels (Trade can be busy)
 local RESEND = 10        -- lines sent again on a refresh
 local MAX_TEXT = 200     -- characters per line
+local SENDS = 2          -- every line but a public channel's goes out twice, in case the app missed one
 
 local KINDS = {
     CHAT_MSG_SAY = "say", CHAT_MSG_YELL = "yell", CHAT_MSG_EMOTE = "emote", CHAT_MSG_TEXT_EMOTE = "emote",
@@ -35,8 +37,8 @@ local KINDS = {
 local WHISPER_SLOTS = 10
 
 local lines = {}         -- { id, kind, sender, channel, text }
+local sends = {}         -- id -> how often it went out
 local nextId = 1
-local sentUpTo = 0
 local session = tostring(time())
 
 local function secret(v)
@@ -144,7 +146,23 @@ local function add(kind, sender, channel, text)
     if kind ~= "system" and kind ~= "bnwhisper" then remember(sender) end
     lines[#lines + 1] = { nextId, kind, sender, channel, text }
     nextId = nextId + 1
-    if #lines > KEEP then table.remove(lines, 1) end
+    -- Busy public channels make room among themselves, never by pushing out your
+    -- group's, guild's or whisper lines.
+    local channelLines, oldestChannel = 0, nil
+    for i, l in ipairs(lines) do
+        if l[2] == "channel" then
+            channelLines = channelLines + 1
+            oldestChannel = oldestChannel or i
+        end
+    end
+    if channelLines > KEEP_CHANNEL or (#lines > KEEP and oldestChannel) then
+        sends[lines[oldestChannel][1]] = nil
+        table.remove(lines, oldestChannel)
+    elseif #lines > KEEP then
+        sends[lines[1][1]] = nil
+        table.remove(lines, 1)
+    end
+    if kind ~= "channel" and kind ~= "system" and ns.ChatUrgent then ns.ChatUrgent() end
 end
 
 local f = CreateFrame("Frame")
@@ -174,30 +192,50 @@ local function channels()
 end
 local sentChannels = nil
 
--- The lines not sent yet (all that fit), or nil when there are none (and the
--- channels didn't change). With again, the last RESEND lines (for an app that started late).
+-- The lines still to send (all that fit), or nil when there are none (and the
+-- channels didn't change): your group's, guild's, whisper and other lines first,
+-- each twice, then public channel lines once. In the order they were written (the
+-- app sorts them by number). With again, the last RESEND lines (for an app that started late).
 function ns.ChatPayload(again, peek)
-    local from = again and math.max(1, nextId - RESEND) or sentUpTo + 1
     local chans = channels()
-    local room = ns.StripCapacity() - 32 - #chans - WHISPER_SLOTS * 30
-    local out, used, last = {}, 0, nil
-    for _, l in ipairs(lines) do
-        if l[1] >= from then
-            local entry = table.concat(l, "\t")
-            if used + #entry + 1 > room then break end
-            out[#out + 1] = entry
-            used = used + #entry + 1
-            last = l[1]
-        end
-    end
-    if not last and chans == sentChannels and not again then return nil end
-    if not peek then
-        if last then sentUpTo = math.max(sentUpTo, last) end
-        sentChannels = chans
-    end
     local names = {}
     for n = 1, WHISPER_SLOTS do names[n] = whisperName[n] or "" end
-    return "TH1|" .. session .. "\t" .. table.concat(names, ",") .. "\t" .. chans .. "\n" .. table.concat(out, "\n")
+    local head = "TH1|" .. session .. "\t" .. table.concat(names, ",") .. "\t" .. chans
+    local room = ns.StripCapacity() - #head - 1
+    local picked, used = {}, 0
+    local function take(l)
+        local entry = table.concat(l, "\t")
+        -- A line too long for the square on its own is cut, or it would hold up the rest.
+        if used == 0 and #entry + 1 > room then
+            l[5] = l[5]:sub(1, math.max(0, #l[5] - (#entry + 1 - room) - 3)) .. "…"
+            entry = table.concat(l, "\t")
+        end
+        if used + #entry + 1 > room then return false end
+        picked[#picked + 1] = l
+        used = used + #entry + 1
+        return true
+    end
+    if again then
+        for _, l in ipairs(lines) do
+            if l[1] >= nextId - RESEND then take(l) end
+        end
+    else
+        for _, l in ipairs(lines) do
+            if l[2] ~= "channel" and (sends[l[1]] or 0) < SENDS and not take(l) then break end
+        end
+        for _, l in ipairs(lines) do
+            if l[2] == "channel" and (sends[l[1]] or 0) < 1 and not take(l) then break end
+        end
+    end
+    if #picked == 0 and chans == sentChannels and not again then return nil end
+    table.sort(picked, function(a, b) return a[1] < b[1] end)
+    local out = {}
+    for i, l in ipairs(picked) do
+        out[i] = table.concat(l, "\t")
+        if not peek then sends[l[1]] = (sends[l[1]] or 0) + 1 end
+    end
+    if not peek then sentChannels = chans end
+    return head .. "\n" .. table.concat(out, "\n")
 end
 
 -- For /thor chat channels on|off.

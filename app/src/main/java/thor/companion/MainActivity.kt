@@ -993,7 +993,8 @@ class MainActivity : Activity() {
             away != null -> "$title  ·  go to $away"
             else -> "$title  ·  not on this zone's map"
         }
-        mapView?.targetNote = h?.let { it.place to (it.yards?.let { yd -> if (yd < 15) "here" else "$yd yd" } ?: "") }
+        // Only the ring on the map: the yards are on the quest line above it (the map is small).
+        mapView?.targetNote = h?.let { it.place to "" }
         mapView?.highlight = title
         mapView?.invalidate()
     }

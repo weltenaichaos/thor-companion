@@ -32,7 +32,7 @@ class MapView(context: Context) : View(context) {
     var questAreas = true
     /** A quest title whose places are marked more strongly (tapped in the Quests tab). */
     var highlight: String? = null
-    /** The selected quest's nearest place and how far it is ("120 yd"), written under its ring. */
+    /** The selected quest's nearest place, ringed, and an optional note written under the ring. */
     var targetNote: Pair<MapPlace, String>? = null
     /** Called with the place nearest to a tap. */
     var onPlace: (MapPlace) -> Unit = {}

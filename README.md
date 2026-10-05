@@ -42,7 +42,8 @@ later on will be one key press per tap.
    the map zooms to show you and the nearest one, and a line above the map keeps the
    yards up to date (✕ clears it). The zone's size in yards comes from the game, or
    from walking around a little where the game doesn't say, from the world position or
-   from your running speed (`/thor map` shows which, and what it measured).
+   from your running speed: run straight for about ten seconds (`/thor map` shows
+   which, and what it measured; a few more runs make it more exact).
    Each quest also carries where the game's own arrow points next ("mapID:x:y:zone"),
    so a quest ready to turn in points at whoever takes it, and a quest whose next step
    is in another zone says which zone.
@@ -95,7 +96,8 @@ when the game starts. In game:
   reads no tooltips in the first 30 seconds after one.
 - Public channels (General, Trade, ...) are in the app's Chat tab (General) with a write
   button each; `/thor chat channels off` leaves their lines out, `on` brings them back. Say, yell, emotes, whispers, party, raid, instance,
-  guild and system lines are always sent. During boss fights the game hides chat from
+  guild and system lines are always sent, before channel lines and each twice (in case
+  the app missed one); a busy Trade channel can't push them out. During boss fights the game hides chat from
   addons, so those lines show as hidden.
   The Chat tab has its own tabs (All, Group, Whispers, Guild, General). A button under
   each, or a tap on a line (to whisper its sender), opens a text field with the keyboard

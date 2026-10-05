@@ -247,7 +247,7 @@ class MapView(context: Context) : View(context) {
 
     companion object {
         /** About the time between two positions from the addon while walking. */
-        const val GLIDE_MS = 700L
+        const val GLIDE_MS = 500L
 
         const val MIN_SPAN = 0.08
 

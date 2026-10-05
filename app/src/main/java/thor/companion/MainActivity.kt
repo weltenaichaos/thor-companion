@@ -277,6 +277,7 @@ class MainActivity : Activity() {
         }
         var misses = 0
         var seenSquare = false
+        var absent = 0
         var near = -1
         val assembler = PartAssembler()
         while (worker === Thread.currentThread()) {
@@ -290,7 +291,6 @@ class MainActivity : Activity() {
             }
             if (frame != null) {
                 misses = 0
-                seenSquare = true
                 frameAt = SystemClock.uptimeMillis()
                 near = frame.row
                 // A small change (TD1) becomes the whole message again, from the last one the app kept.
@@ -343,13 +343,16 @@ class MainActivity : Activity() {
             // loading screen) the app leaves the game's screen alone: taking screenshots
             // of it then crashed the game as it loaded into the world. After the square
             // goes away it waits a while, then looks only now and then until it is back.
+            // Only a square that isn't there counts: a damaged read (the square changed
+            // while it was taken) is read again at the usual pace.
+            if (result is StripDecoder.Result.Ok) { absent = 0; seenSquare = true } else absent++
             val period = when {
-                frame == null && !seenSquare -> 10_000L
-                frame == null && misses <= 2 -> 1000L
-                frame == null && misses == 3 -> 30_000L
-                frame == null -> 5000L
+                absent > 0 && !seenSquare -> 10_000L
+                absent in 1..4 -> 1000L
+                absent == 5 -> 30_000L
+                absent > 5 -> 5000L
                 fast -> 200L
-                walking -> 400L
+                walking -> 250L
                 else -> 1000L
             }
             SystemClock.sleep((period - (SystemClock.uptimeMillis() - t0)).coerceIn(30, period))
@@ -914,7 +917,7 @@ class MainActivity : Activity() {
     private lateinit var compassArrow: ArrowView
     private lateinit var compassText: TextView
 
-    /** The quest arrow: which way to turn and how far, from where you are and face. */
+    /** The quest arrow: which way on the map and how far, from where you are. */
     private fun updateCompass() {
         val title = tracked
         if (title == null) { compass.visibility = View.GONE; return }
@@ -929,9 +932,8 @@ class MainActivity : Activity() {
             return
         }
         compassArrow.visibility = View.VISIBLE
-        // The map's north is up; with the facing known, the arrow turns with you, like the minimap.
-        val turn = h.bearing + (s?.facing ?: 0.0)
-        compassArrow.pointTo(Math.toDegrees(turn).toFloat())
+        // North is up, as on the map, so the arrow and the map agree whichever way you face.
+        compassArrow.pointTo(Math.toDegrees(h.bearing).toFloat())
         val what = if (h.place.kind == 'Q') "turn in" else if (h.place.kind == 'a') "start" else "objective"
         val far = h.yards?.let { if (it < 15) "here" else "$it yd" }
         compassText.text = listOfNotNull(title, far, what).joinToString("  ·  ")

@@ -107,7 +107,19 @@ function ns.MapPayload()
     local parent = info and info.parentMapID and info.parentMapID > 0 and C_Map.GetMapInfo(info.parentMapID)
     -- The zone's size in yards, so the app can say how far away a place is.
     local okSize, width, height = pcall(C_Map.GetMapWorldSize, mapID)
-    if not okSize or type(width) ~= "number" or type(height) ~= "number" then width, height = 0, 0 end
+    if not okSize or type(width) ~= "number" or type(height) ~= "number" or width <= 0 then
+        -- Without GetMapWorldSize: the world positions of two opposite corners.
+        width, height = 0, 0
+        local ok, a, b = pcall(function()
+            local _, p0 = C_Map.GetWorldPosFromMapPos(mapID, CreateVector2D(0, 0))
+            local _, p1 = C_Map.GetWorldPosFromMapPos(mapID, CreateVector2D(1, 1))
+            return p0, p1
+        end)
+        if ok and a and b then
+            -- World x runs north and y west, so the map's width is the y difference.
+            width, height = math.abs(a.y - b.y), math.abs(a.x - b.x)
+        end
+    end
     local head = "TM1|" .. mapID .. "|" .. label(info and info.name):gsub("|", "/") .. "|" .. label(parent and parent.name):gsub("|", "/")
         .. string.format("|%d|%d", width, height)
     local room = ns.StripCapacity() - #head - 1

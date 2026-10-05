@@ -38,7 +38,7 @@ later on will be one key press per tap.
    shows the experience to the next level, rested experience, how many kills that is
    at the last kill's experience, and what the quests ready to turn in give.
    Tapping a quest there also starts the quest arrow at the top of the app: which way
-   to go (turning with you, like the minimap) and how many yards to its nearest area,
+   to go on the map (north up, like the map) and how many yards to its nearest area,
    or to where you turn it in once it is ready.
    Long-press an item for its type, levels, sell price and what its tooltip says (stats,
    "Use: ..."; the addon sends tooltips only when nothing else is waiting). The Bags tab

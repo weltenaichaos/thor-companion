@@ -117,7 +117,7 @@ local SENDS = 2
 local REFRESH_TICKS = 600       -- five minutes: state and bags again, for an app started late
 local NAMES_REFRESH_TICKS = 600  -- five minutes: names again, for an app that was reinstalled
 local MAP_REFRESH_TICKS = 120   -- one minute: the map again, so a restarted app is soon up to date
-local MOVE_SECONDS = 0.7         -- while walking, the position is sent at most this often
+local MOVE_SECONDS = 0.5         -- while walking, the position is sent at most this often
 local sentCount = {}
 
 -- The next page of names that still need sending, or nil when there are none.

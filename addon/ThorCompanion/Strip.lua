@@ -166,7 +166,7 @@ end
 -- (Only waiting for the first round was too short: the app often first notices
 -- a message halfway through it, and the facing in the status changes all the time.)
 -- The status (your position) may go sooner: a newer one replaces it anyway.
-local STATUS_SECONDS = 0.7
+local STATUS_SECONDS = 0.5
 
 function ns.StripBusy()
     local hold = message and message:sub(1, 4) == "TS1|" and STATUS_SECONDS or MIN_SECONDS

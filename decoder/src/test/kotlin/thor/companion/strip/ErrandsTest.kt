@@ -26,6 +26,18 @@ class ErrandsTest {
     }
 
     @Test
+    fun usesTheTownTheQuestNamesWhenTheGameGivesNoSpot() {
+        val log = QuestLog.parse(
+            "TL1|0|2|1500|1\n" +
+                "1\tr\t900\tA Recipe for Death\t\t12\t\tUndercity\n" +
+                "2\tr\t600\tFresh Meat\t\t11\t1458:0.6:0.4:Undercity\tUndercity\n",
+        )!!
+        val stops = Errands.of(log, null)
+        assertEquals(listOf("Undercity"), stops.map { it.name })
+        assertEquals(1500, stops[0].xp)
+    }
+
+    @Test
     fun nothingToDo() {
         assertEquals(0, Errands.of(null, null).size)
         assertEquals(0, Errands.of(QuestLog.parse("TL1|0|0|0\n1\tz\t5\tA\t\t1\t\t")!!, SpellPlan.parse("TV1|14||\n15\tf\t0\tX\t"))

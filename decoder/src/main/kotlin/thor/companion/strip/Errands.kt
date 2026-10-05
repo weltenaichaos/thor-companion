@@ -18,6 +18,8 @@ data class ErrandStop(val name: String, val zone: String, val at: Waypoint?, val
  * place not known".
  */
 object Errands {
+    const val UNKNOWN = "Turn-in place not known"
+
     fun of(log: QuestLog?, spells: SpellPlan?): List<ErrandStop> {
         data class Key(val name: String, val zone: String)
         val stops = LinkedHashMap<Key, MutableList<Errand>>()
@@ -30,7 +32,7 @@ object Errands {
         for (q in log?.quests.orEmpty().filter { it.ready }) {
             val w = q.waypoint
             val zone = w?.zone.orEmpty()
-            val name = q.place.ifEmpty { zone.ifEmpty { "Turn-in place not known" } }
+            val name = q.place.ifEmpty { zone.ifEmpty { UNKNOWN } }
             add(name, if (name == zone) "" else zone, w, Errand(q.title, xp = q.xp, quest = q))
         }
         val ready = spells?.ready.orEmpty()

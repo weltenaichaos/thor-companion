@@ -948,9 +948,10 @@ class MainActivity : Activity() {
         if (q.ready) box.addView(line("Ready to turn in", Theme.GOOD, 12f).apply { setPadding(0, dp(2), 0, 0) })
         val away = q.waypoint?.takeIf { it.mapId != state?.mapId }?.zone?.ifEmpty { null }
         val where = when {
-            h != null && q.ready -> distance(h)
             h != null -> distance(h)
             away != null -> "In $away"
+            // No waypoint from the game, but the quest's text names where to hand it in.
+            q.ready && q.waypoint == null && q.place.isNotEmpty() -> "Turn it in at ${q.place}"
             else -> null
         }
         if (where != null) box.addView(line(where, if (selected) Color.WHITE else DIM, 12f).apply { setPadding(0, dp(2), 0, 0) })
@@ -978,6 +979,7 @@ class MainActivity : Activity() {
             say(when {
                 h != null -> "${q.title}: marked with a white ring on the map"
                 away != null -> "${q.title}: the next step is in $away, not in this zone"
+                q.ready && q.waypoint == null && q.place.isNotEmpty() -> "${q.title}: turn it in at ${q.place} (the game gives no map spot for it)"
                 else -> "${q.title}: not on this zone's map"
             })
         }
@@ -1011,8 +1013,8 @@ class MainActivity : Activity() {
         }
         val here = stops.filter { yards[it] != null || (it.at != null && it.at?.mapId == state?.mapId) }
             .sortedBy { yards[it]?.yards ?: Int.MAX_VALUE }
-        val known = stops.filter { it !in here && it.at != null }.sortedByDescending { it.xp }
-        val ordered = here + known + stops.filter { it !in here && it.at == null }
+        val known = stops.filter { it !in here && it.name != Errands.UNKNOWN }.sortedByDescending { it.xp }
+        val ordered = here + known + stops.filter { it !in here && it.name == Errands.UNKNOWN }
         val best = stops.maxByOrNull { it.xp }?.takeIf { stops.size > 1 && it.xp > 0 }
         for (stop in ordered) {
             val s = LinearLayout(this).apply {

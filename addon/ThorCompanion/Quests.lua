@@ -10,7 +10,8 @@
 -- <waypoint> is where the game's own arrow points next, "mapID:x:y:zone" (empty
 -- when the game doesn't say): for a quest ready to turn in that is whoever takes it,
 -- also when they are in another zone. <place> is the town there (empty when none
--- is near), for the app's errands.
+-- is near), for the app's errands; without a waypoint, the town the quest's text
+-- names for the turn-in.
 
 local _, ns = ...
 
@@ -87,9 +88,28 @@ end
 -- (empty when the game doesn't say). This also covers quests whose next step, or
 -- whose turn-in, is in another zone.
 -- Also the town there, from the nearest flight master (empty when none is close).
-local function waypoint(id)
+-- The town the quest's own text names for handing it in ("Return to Zinge in the
+-- Undercity." gives "Undercity"), for when the game gives no waypoint, which it doesn't
+-- for many turn-ins in another zone, often one you haven't been to.
+local function namedPlace(id)
+    local index = C_QuestLog.GetLogIndexForQuestID and C_QuestLog.GetLogIndexForQuestID(id)
+    if not index or not GetQuestLogCompletionText then return "" end
+    local ok, text = pcall(GetQuestLogCompletionText, index)
+    if not ok or type(text) ~= "string" or secret(text) then return "" end
+    local place
+    for p in text:gmatch(" in ([^%.,;!]+)") do place = p end
+    if not place then return "" end
+    place = place:gsub("^[Tt]he ", ""):gsub("%s+$", "")
+    return place
+end
+
+local function waypoint(id, isReady)
     local ok, mapID, x, y = pcall(C_QuestLog.GetNextWaypoint, id)
-    if not ok or not mapID or secret(mapID) or not x or not y then return "", "" end
+    if not ok or not mapID or secret(mapID) or not x or not y then
+        if not isReady then return "", "" end
+        local okNamed, named = pcall(namedPlace, id)
+        return "", okNamed and clean(named, 24) or ""
+    end
     mapID, x, y = number(mapID), number(x), number(y)
     if not mapID or not x or not y then return "", "" end
     local info = C_Map.GetMapInfo(mapID)
@@ -123,7 +143,7 @@ local function build()
             local state = isReady and "r" or (info.isOnMap and "z" or "o")
             local level = number(info.difficultyLevel) or 0
             if level <= 0 then level = number(info.level) or 0 end
-            local where, place = waypoint(id)
+            local where, place = waypoint(id, isReady)
             local entry = table.concat({ id, state, xp, clean(info.title, MAX_TITLE), table.concat(objectives, ";"), level, where, place }, "\t")
             if state == "o" then elsewhere[#elsewhere + 1] = entry else here[#here + 1] = entry end
         end

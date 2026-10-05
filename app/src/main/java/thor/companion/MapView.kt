@@ -169,6 +169,45 @@ class MapView(context: Context) : View(context) {
         canvas.drawRect(ox, oy, ox + w, oy + h, edge)
     }
 
+    /**
+     * Moves you to [nx], [ny] facing [nf]. The addon sends your position a few times
+     * a second while you walk; in between the arrow glides there instead of jumping,
+     * so the map moves smoothly without the game sending (or the app reading) more.
+     * A jump (new zone, a portal) is shown at once.
+     */
+    fun glideTo(nx: Double?, ny: Double?, nf: Double?) {
+        val fx = x; val fy = y; val ff = facing
+        glide?.cancel()
+        if (nx == null || ny == null || fx == null || fy == null || hypot(nx - fx, ny - fy) > 0.03) {
+            x = nx; y = ny; facing = nf
+            invalidate()
+            return
+        }
+        // Turn the short way round.
+        var turn = if (nf != null && ff != null) nf - ff else 0.0
+        while (turn > Math.PI) turn -= 2 * Math.PI
+        while (turn < -Math.PI) turn += 2 * Math.PI
+        glide = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = GLIDE_MS
+            interpolator = android.view.animation.LinearInterpolator()
+            addUpdateListener {
+                val t = it.animatedFraction.toDouble()
+                x = fx + (nx - fx) * t
+                y = fy + (ny - fy) * t
+                facing = if (nf == null || ff == null) nf else ff + turn * t
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    private var glide: android.animation.ValueAnimator? = null
+
+    override fun onDetachedFromWindow() {
+        glide?.cancel()
+        super.onDetachedFromWindow()
+    }
+
     /** Pinch to zoom: closer than the whole zone switches to the area around you. */
     private var pinched = false
     private val pinch = android.view.ScaleGestureDetector(context, object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -207,6 +246,9 @@ class MapView(context: Context) : View(context) {
     private fun short(s: String) = if (s.length > 18) s.take(17) + "…" else s
 
     companion object {
+        /** About the time between two positions from the addon while walking. */
+        const val GLIDE_MS = 700L
+
         const val MIN_SPAN = 0.08
 
         fun symbol(kind: Char) = when (kind) {

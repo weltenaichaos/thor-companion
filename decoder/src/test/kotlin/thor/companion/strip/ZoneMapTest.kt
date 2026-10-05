@@ -21,6 +21,13 @@ class ZoneMapTest {
     }
 
     @Test
+    fun readsTheZoneSize() {
+        val map = ZoneMap.parse("TM1|1420|Tirisfal Glades|Eastern Kingdoms|4518|3012\n")!!
+        assertEquals(4518, map.width)
+        assertEquals(3012, map.height)
+    }
+
+    @Test
     fun parsesAnEmptyMap() {
         assertEquals(ZoneMap(85, "Orgrimmar", "", emptyList()), ZoneMap.parse("TM1|85|Orgrimmar|\n"))
         assertNull(ZoneMap.parse("TS1|x|1|0|0|0|0"))

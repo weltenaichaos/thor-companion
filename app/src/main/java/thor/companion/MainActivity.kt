@@ -22,6 +22,10 @@ import thor.companion.strip.Gear
 import thor.companion.strip.GearItem
 import thor.companion.strip.ChatLog
 import thor.companion.strip.Cooldowns
+import thor.companion.strip.BagItem
+import thor.companion.strip.Compass
+import thor.companion.strip.Delta
+import thor.companion.strip.ItemTips
 import thor.companion.strip.ItemUse
 import thor.companion.strip.IconPicture
 import thor.companion.strip.ItemNames
@@ -63,6 +67,7 @@ class MainActivity : Activity() {
 
     private lateinit var screen: TopScreen
     private lateinit var names: NameStore
+    private lateinit var tips: TipStore
     private lateinit var icons: IconStore
     private lateinit var status: TextView
     private lateinit var statusDot: View
@@ -105,6 +110,9 @@ class MainActivity : Activity() {
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
         screen = TopScreen(this)
         names = NameStore(this)
+        tips = TipStore(this)
+        bagSort = getPreferences(MODE_PRIVATE).getInt("bagSort", 0)
+        tracked = getPreferences(MODE_PRIVATE).getString("tracked", null)
         screen.displayId = getPreferences(MODE_PRIVATE).getString("display", null)
 
         icons = IconStore(this)
@@ -163,6 +171,21 @@ class MainActivity : Activity() {
         footer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(header)
         root.addView(statusRow)
+        compass = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = Theme.box(context, SURFACE, 14, Theme.withAlpha(ACCENT, 120))
+            setPadding(dp(10), dp(6), dp(6), dp(6))
+            visibility = View.GONE
+            setOnClickListener { tracked?.let { mapHighlight = it }; show(Panel.MAP) }
+        }
+        compassArrow = ArrowView(this)
+        compassText = line("", TEXT, 14f).apply { setPadding(dp(10), 0, 0, 0) }
+        compass.addView(compassArrow, LinearLayout.LayoutParams(dp(26), dp(26)))
+        compass.addView(compassText, LinearLayout.LayoutParams(0, -2, 1f))
+        compass.addView(chip("✕") { tracked = null; getPreferences(MODE_PRIVATE).edit().remove("tracked").apply(); updateCompass() },
+            LinearLayout.LayoutParams(dp(44), -2))
+        root.addView(compass, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         root.addView(toolbar)
         scroll = ScrollView(this).apply { addView(content); isVerticalScrollBarEnabled = false }
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -171,6 +194,7 @@ class MainActivity : Activity() {
         runCatching { trail.load(trailFile().readText()) }
         loadLast()
         show(Panel.BAGS)
+        updateCompass()
         say("Looking for the game…")
     }
 
@@ -194,6 +218,10 @@ class MainActivity : Activity() {
     // next refresh (or a tap on Refresh).
     /** False while the bags shown are the ones kept from before a restart: then a tap could use whatever moved into that slot since. */
     private var bagsFresh = false
+    private var bagsDifferSince = 0L
+    private var addonChecked = false
+    /** How the bags are sorted: 0 as in the game, 1 type, 2 quality, 3 sell value. */
+    private var bagSort = 0
     private val lastMessages = java.util.concurrent.ConcurrentHashMap<String, String>()
     private fun lastFile() = java.io.File(filesDir, "last-messages.txt")
 
@@ -238,6 +266,15 @@ class MainActivity : Activity() {
             }
             return
         }
+        // The addon that came with this app goes into the game (once per start of the app).
+        if (!addonChecked) {
+            addonChecked = true
+            val n = AddonInstaller.install(this)
+            val v = AddonInstaller.version(this)
+            if (n != null && n > 0) runOnUiThread {
+                say("Put the Forever Companion addon $v into the game. Type /reload in the game (or restart it) to load it.", notice = true)
+            }
+        }
         var misses = 0
         var near = -1
         val assembler = PartAssembler()
@@ -254,7 +291,10 @@ class MainActivity : Activity() {
                 misses = 0
                 frameAt = SystemClock.uptimeMillis()
                 near = frame.row
-                val message = assembler.add(frame)
+                // A small change (TD1) becomes the whole message again, from the last one the app kept.
+                val message = assembler.add(frame)?.let { m ->
+                    if (m.startsWith("TD1|")) Delta.apply(m) { lastMessages[it] } else m
+                }
                 val page = message?.let { ItemNames.parse(it) }
                 if (message?.startsWith("TS1|") == true) movedAt = SystemClock.uptimeMillis()
                 if (message != null) remember(message)
@@ -272,6 +312,7 @@ class MainActivity : Activity() {
                     message.startsWith("TU1|") -> ItemUse.parse(message)?.let { runOnUiThread { onUse(it) } }
                     message.startsWith("TC2|") -> Cooldowns.parse(message)?.let { runOnUiThread { onCooldowns(it) } }
                     message.startsWith("TL1|") -> QuestLog.parse(message)?.let { runOnUiThread { onQuests(it) } }
+                    message.startsWith("TT1|") -> ItemTips.parse(message)?.let { tips.addAll(it) }
                     page != null -> {
                         val changed = names.addAll(page)
                         runOnUiThread { onNames(changed) }
@@ -285,7 +326,7 @@ class MainActivity : Activity() {
                     result is StripDecoder.Result.Failed -> result.reason
                     else -> "the data was damaged"
                 }
-                runOnUiThread { say("No data from the addon ($why). Is the game open with ThorCompanion on?") }
+                runOnUiThread { say("No data from the addon ($why). Is the game open with the Forever Companion addon on?") }
             }
             // Reading the screen is what costs battery, so look once a second while
             // nothing is going on. The addon shows each part of a longer message for
@@ -315,8 +356,16 @@ class MainActivity : Activity() {
         if (parsed != null && message.startsWith("TS1|")) {
             // Bags kept from before a restart are right when the addon's checksum of its last bags says so.
             val kept = lastMessages["TB1|"]
-            if (!bagsFresh && parsed.bagHash != null && kept != null && GameState.hash(kept) == parsed.bagHash) {
+            val matches = parsed.bagHash != null && kept != null && GameState.hash(kept) == parsed.bagHash
+            if (!bagsFresh && matches) {
                 bagsFresh = true
+                if (panel == Panel.BAGS) render()
+            }
+            // Bags that stay different from the game's for a while (a missed change): say so, and offer to load them.
+            if (matches || parsed.bagHash == null) bagsDifferSince = 0L
+            else if (bagsDifferSince == 0L) bagsDifferSince = SystemClock.uptimeMillis()
+            else if (bagsFresh && SystemClock.uptimeMillis() - bagsDifferSince > 8000) {
+                bagsFresh = false
                 if (panel == Panel.BAGS) render()
             }
             // The path walked is per game session: a new login or /reload starts it afresh.
@@ -338,6 +387,7 @@ class MainActivity : Activity() {
         }
         // Walking only moves the arrow on the map; the other tabs don't show where you are.
         if (!moved) render() else if (panel == Panel.MAP && mapView != null) updateMap()
+        updateCompass()
     }
 
     private fun mapFile(id: Int) = java.io.File(java.io.File(filesDir, "maps").apply { mkdirs() }, "$id.png")
@@ -423,6 +473,7 @@ class MainActivity : Activity() {
         if (map == zoneMap) return
         zoneMap = map
         if (panel == Panel.MAP) render()
+        updateCompass()
     }
 
     private fun onChat(message: String) {
@@ -505,7 +556,7 @@ class MainActivity : Activity() {
         updateBadges()
         val s = state
         if (s == null) {
-            content.addView(empty("Waiting for the game…", "Open WoW with the ThorCompanion addon on. If it is already open, tap Load from the game."))
+            content.addView(empty("Waiting for the game…", "Open WoW Forever with the Forever Companion addon on. If it is already open, tap Load from the game."))
             return
         }
         when (panel) {
@@ -694,9 +745,7 @@ class MainActivity : Activity() {
         val s = state
         val map = zoneMap?.takeIf { it.mapId == s?.mapId }
         view.zone = map
-        view.x = s?.x?.takeIf { it > 0 }
-        view.y = s?.y?.takeIf { it > 0 }
-        view.facing = s?.facing
+        view.glideTo(s?.x?.takeIf { it > 0 }, s?.y?.takeIf { it > 0 }, s?.facing)
         view.trail = s?.mapId?.let { trail.paths[it] }.orEmpty()
         view.picture = s?.mapId?.let { picture(it) }
         val where = if (s?.x != null && s.y != null && s.x!! > 0) String.format(Locale.US, "   %.1f, %.1f", s.x!! * 100, s.y!! * 100) else ""
@@ -838,14 +887,46 @@ class MainActivity : Activity() {
         box.setOnClickListener {
             // Its area on the map, if the game shows one in this zone.
             mapHighlight = q.title
+            tracked = q.title
+            getPreferences(MODE_PRIVATE).edit().putString("tracked", q.title).apply()
+            updateCompass()
             show(Panel.MAP)
-            say("${q.title}: marked with a white ring on the map, where the game shows it in this zone")
+            say("${q.title}: marked with a white ring on the map, and the arrow at the top points the way")
         }
         return box
     }
 
     /** Quest whose area the map marks (after a tap on it in the Quests tab). */
     private var mapHighlight: String? = null
+
+    /** The quest the arrow at the top points to (the last one tapped in the Quests tab), until ✕. */
+    private var tracked: String? = null
+    private lateinit var compass: LinearLayout
+    private lateinit var compassArrow: ArrowView
+    private lateinit var compassText: TextView
+
+    /** The quest arrow: which way to turn and how far, from where you are and face. */
+    private fun updateCompass() {
+        val title = tracked
+        if (title == null) { compass.visibility = View.GONE; return }
+        compass.visibility = View.VISIBLE
+        val s = state
+        val map = zoneMap?.takeIf { it.mapId == s?.mapId }
+        val x = s?.x; val y = s?.y
+        val h = if (map != null && x != null && y != null && x > 0) Compass.toQuest(map, title, x, y) else null
+        if (h == null) {
+            compassArrow.visibility = View.INVISIBLE
+            compassText.text = "$title  ·  not on this zone's map"
+            return
+        }
+        compassArrow.visibility = View.VISIBLE
+        // The map's north is up; with the facing known, the arrow turns with you, like the minimap.
+        val turn = h.bearing + (s?.facing ?: 0.0)
+        compassArrow.pointTo(Math.toDegrees(turn).toFloat())
+        val what = if (h.place.kind == 'Q') "turn in" else if (h.place.kind == 'a') "start" else "objective"
+        val far = h.yards?.let { if (it < 15) "here" else "$it yd" }
+        compassText.text = listOfNotNull(title, far, what).joinToString("  ·  ")
+    }
 
     /**
      * The level checker: how far to the next level, the rested experience, how many
@@ -908,6 +989,18 @@ class MainActivity : Activity() {
             known?.requiredLevel?.takeIf { it > 1 }?.let { "Requires level $it" },
         )
         if (facts.isNotEmpty()) box.addView(line(facts.joinToString("  ·  "), TEXT, 13f).apply { setPadding(0, dp(6), 0, 0) })
+        // What the game's tooltip says: stats, "Use: ..." in green like the game shows it.
+        tips[itemId]?.takeIf { it.isNotEmpty() }?.let { lines ->
+            for (t in lines) {
+                val colour = when {
+                    t.startsWith("Use:") || t.startsWith("Equip:") || t.startsWith("Chance on hit:") -> Theme.GOOD
+                    t.startsWith("\"") -> Color.rgb(255, 210, 0)
+                    t.startsWith("+") -> TEXT
+                    else -> DIM
+                }
+                box.addView(line(t, colour, 13f).apply { setPadding(0, dp(2), 0, 0) })
+            }
+        }
         val price = known?.sellPrice ?: 0
         box.addView(line("", TEXT, 13f).apply {
             text = when {
@@ -1102,11 +1195,37 @@ class MainActivity : Activity() {
         head.addView(slots)
         content.addView(head, cardParams())
 
+        // Grey items are what you sell; worth knowing when the bags fill up.
+        val junk = s.items.filter { names[it.itemId]?.quality == 0 }
+        val junkValue = junk.sumOf { (names[it.itemId]?.sellPrice ?: 0L) * it.count }
+        if (junk.isNotEmpty() || (free != null && free <= 3)) {
+            val note = android.text.SpannableStringBuilder()
+            if (free != null && free <= 3) note.append(if (free == 0) "Your bags are full.  " else "Your bags are almost full.  ")
+            if (junk.isNotEmpty()) note.append("${junk.size} grey item${if (junk.size == 1) "" else "s"}, worth ").append(coins(junkValue)).append(" at a vendor")
+            content.addView(line("", if (free != null && free <= 3) Theme.WARN else DIM, 13f).apply { text = note; setPadding(dp(4), 0, 0, dp(2)) })
+        }
+
+        // Sort: as in the bags, or by type, quality or what they sell for.
+        val sorts = listOf("Bag order", "Type", "Quality", "Value")
+        val sortRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, 0) }
+        for ((i, label) in sorts.withIndex()) {
+            sortRow.addView(chip(label) { bagSort = i; getPreferences(MODE_PRIVATE).edit().putInt("bagSort", i).apply(); render() }.apply {
+                if (i == bagSort) { background = Theme.box(context, ACCENT, 18); setTextColor(Color.BLACK) }
+            }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(4) })
+        }
+        content.addView(sortRow)
+        val items = when (bagSort) {
+            1 -> s.items.sortedWith(compareBy({ names[it.itemId]?.type ?: "~" }, { names[it.itemId]?.name ?: "~" }))
+            2 -> s.items.sortedWith(compareByDescending<BagItem> { names[it.itemId]?.quality ?: -1 }.thenBy { names[it.itemId]?.name ?: "~" })
+            3 -> s.items.sortedByDescending { (names[it.itemId]?.sellPrice ?: 0L) * it.count }
+            else -> s.items
+        }
+
         val ids = s.items.map { it.itemId }
         val hint = iconHint(ids)
-        content.addView(section((if (s.items.any { it.key != null } && bagsFresh) "Tap an item to use it" else "Items") + hint))
+        content.addView(section((if (s.items.any { it.key != null } && bagsFresh) "Tap to use, hold for details" else "Hold an item for details") + hint))
         val grid = GridLayout(this).apply { columnCount = 5; useDefaultMargins = false }
-        for (item in s.items) {
+        for (item in items) {
             val known = names[item.itemId]
             val quality = known?.let { qualityColour(it.quality) }
             val tile = LinearLayout(this).apply {

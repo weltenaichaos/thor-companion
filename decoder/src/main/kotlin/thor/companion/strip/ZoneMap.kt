@@ -8,7 +8,11 @@ data class MapPlace(val kind: Char, val x: Double, val y: Double, val label: Str
  * `TM1|mapID|zone|parent<newline><kind>,<x>,<y>,<label><newline>...` message
  * (see addon/ThorCompanion/Map.lua for the kinds).
  */
-data class ZoneMap(val mapId: Int, val zone: String, val parent: String, val places: List<MapPlace>) {
+data class ZoneMap(
+    val mapId: Int, val zone: String, val parent: String, val places: List<MapPlace>,
+    /** The zone's size in yards (0 when the game didn't say). */
+    val width: Int = 0, val height: Int = 0,
+) {
     companion object {
         /** Null when [payload] is not a TM1 message. */
         fun parse(payload: String): ZoneMap? {
@@ -23,7 +27,8 @@ data class ZoneMap(val mapId: Int, val zone: String, val parent: String, val pla
                 val y = f[2].toDoubleOrNull() ?: return@mapNotNull null
                 MapPlace(f[0][0], x, y, f[3])
             }
-            return ZoneMap(mapId, head.getOrElse(1) { "" }, head.getOrElse(2) { "" }, places)
+            return ZoneMap(mapId, head.getOrElse(1) { "" }, head.getOrElse(2) { "" }, places,
+                head.getOrNull(3)?.toIntOrNull() ?: 0, head.getOrNull(4)?.toIntOrNull() ?: 0)
         }
     }
 }

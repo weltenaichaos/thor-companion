@@ -156,6 +156,11 @@ function ns.StripCapacity()
     return PART_BYTES * MAX_PARTS
 end
 
+-- Bytes in one part: a message this short is shown at once, without parts going round.
+function ns.StripPartBytes()
+    return PART_BYTES
+end
+
 -- True while a message has not been up for MIN_SECONDS, or its parts are still
 -- going round; the caller waits with the next one, so the app sees every part.
 -- (Only waiting for the first round was too short: the app often first notices

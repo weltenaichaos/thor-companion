@@ -46,7 +46,7 @@ local buttons = {}
 local slotKey = {}     -- "bag:slot" -> index into ns.ActionKeys
 local pending = false
 
-local P = "|cff66ccffThor Companion|r "
+local P = "|cff66ccffForever Companion|r "
 
 -- Points a slot's button at its item, or at nothing when the slot is empty: the
 -- game's item button raises a Lua error when told to use an empty slot.

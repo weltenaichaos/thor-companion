@@ -11,8 +11,8 @@ android {
         applicationId = "thor.companion"
         minSdk = 30
         targetSdk = 34
-        versionCode = 27
-        versionName = "0.16.2"
+        versionCode = 28
+        versionName = "0.17.0"
     }
 
     // One fixed debug key in the repo, so every CI build installs over the last one
@@ -34,6 +34,9 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    // The addon goes into the APK, so the app can put the matching version into the game (AddonInstaller).
+    sourceSets["main"].assets.srcDirs("../addon")
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

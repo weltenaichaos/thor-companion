@@ -1,4 +1,6 @@
-# Thor Companion
+# Forever Companion
+
+(Repository and addon folder keep the old name ThorCompanion, so the addon keeps its settings.)
 
 A second-screen companion for WoW Forever on the AYN Thor. The game runs on the top
 screen; your bags, character, map and chat appear on the bottom screen instead of
@@ -35,8 +37,20 @@ later on will be one key press per tap.
    The Quests tab lists your quest log, and a level checker (also on the Character tab)
    shows the experience to the next level, rested experience, how many kills that is
    at the last kill's experience, and what the quests ready to turn in give.
-   Long-press an item for its type, levels and sell price. Long-press the status line
-   for the battery check.
+   Tapping a quest there also starts the quest arrow at the top of the app: which way
+   to go (turning with you, like the minimap) and how many yards to its nearest area,
+   or to where you turn it in once it is ready.
+   Long-press an item for its type, levels, sell price and what its tooltip says (stats,
+   "Use: ..."; the addon sends tooltips only when nothing else is waiting). The Bags tab
+   sorts by bag order, type, quality or value, and shows what your grey items sell for.
+   Long-press the status line for the battery check.
+   Small changes to long messages (a looted item, a quest objective) go out as a short
+   TD1 change instead of the whole message, so the square changes less and bags and
+   quests update sooner; changed bags go before everything else. The map arrow glides
+   between positions instead of jumping.
+   **The app installs the addon:** the APK carries the addon, and at start the app puts
+   that version into Thor Forever's Download/Thor-Forever/AddOns folder and the game's
+   Interface\AddOns (where they exist and hold another version). Type /reload in the game.
 3. The **decoder** (`decoder/`) is plain Kotlin that the app uses. It is tested
    against a square drawn by the addon, upscaled and colour-shifted like on the Thor.
 

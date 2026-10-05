@@ -1,7 +1,7 @@
 -- Map.lua
 -- What the app's Map tab draws, besides your own position (TS1): the zone's name
 -- and the places on it. Sent as
---   TM1|mapID|zone|parent zone<newline><kind>,<x>,<y>,<label><newline>...
+--   TM1|mapID|zone|parent zone|width|height<newline><kind>,<x>,<y>,<label><newline>...
 -- with x and y from 0 to 1 on the zone map, like the position. Kinds:
 --   q quest objective area   Q quest ready to turn in   a quest to pick up
 --   w your map pin
@@ -105,7 +105,11 @@ function ns.MapPayload()
     if not mapID then return nil end
     local info = C_Map.GetMapInfo(mapID)
     local parent = info and info.parentMapID and info.parentMapID > 0 and C_Map.GetMapInfo(info.parentMapID)
+    -- The zone's size in yards, so the app can say how far away a place is.
+    local okSize, width, height = pcall(C_Map.GetMapWorldSize, mapID)
+    if not okSize or type(width) ~= "number" or type(height) ~= "number" then width, height = 0, 0 end
     local head = "TM1|" .. mapID .. "|" .. label(info and info.name):gsub("|", "/") .. "|" .. label(parent and parent.name):gsub("|", "/")
+        .. string.format("|%d|%d", width, height)
     local room = ns.StripCapacity() - #head - 1
     local out, used = {}, 0
     for _, e in ipairs(places(mapID)) do

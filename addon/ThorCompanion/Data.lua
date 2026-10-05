@@ -15,6 +15,8 @@
 --   TM1|...                                                   (places on the zone map, see Map.lua)
 --   TP1|... and TQ1|...                                       (character and gear, see Character.lua)
 --   TL1|...                                                   (quest log and last kill, see Quests.lua)
+--   TT1|...                                                   (item tooltips, when nothing else is waiting, see Tooltips.lua)
+--   TD1|...                                                   (a small change to TB1, TM1, TP1, TQ1 or TL1, see below)
 -- and, for a few seconds after their keys, TW1 (zone picture, Map.lua) and TI1 (item icons, Icons.lua).
 -- The app keeps the names it has seen. State and bags are sent again every five
 -- minutes (names too), for an app that started after the game.
@@ -114,7 +116,7 @@ end
 local SENDS = 2
 local REFRESH_TICKS = 600       -- five minutes: state and bags again, for an app started late
 local NAMES_REFRESH_TICKS = 600  -- five minutes: names again, for an app that was reinstalled
-local MAP_REFRESH_TICKS = 120   -- one minute: map and bags again, so a restarted app is soon up to date
+local MAP_REFRESH_TICKS = 120   -- one minute: the map again, so a restarted app is soon up to date
 local MOVE_SECONDS = 0.7         -- while walking, the position is sent at most this often
 local sentCount = {}
 
@@ -196,6 +198,51 @@ end
 
 local kinds = { status, bags, namesPayload, chat, map, ns.CharacterPayload, ns.GearPayload, ns.QuestsPayload, cooldowns }
 local lastSent = {}
+
+-- Small changes to a long message (a looted item, a quest objective) go out as
+--   TD1|<kind>|<checksum before>|<checksum after>|<at>|<cut>|<new bytes>
+-- in one part instead of the whole message in several: the app takes its copy of
+-- the last <kind> message (TB1, TM1, TP1, TQ1, TL1), cuts <cut> bytes at byte <at>
+-- (0-based), puts the new bytes there and checks both checksums. Fewer, shorter
+-- changes of the square, and bags and quests show up sooner. Every MAX_DELTAS
+-- changes the whole message goes out again, for an app that missed one (the
+-- bags' checksum in TS1 also tells the app when its bags are not right).
+local DELTA_KINDS = { [2] = true, [5] = true, [6] = true, [7] = true, [8] = true }
+local MAX_DELTAS = 8
+local known, knownBefore, deltas = {}, {}, {}
+
+local function delta(old, new)
+    local a = 1
+    local maxA = math.min(#old, #new)
+    while a <= maxA and old:byte(a) == new:byte(a) do a = a + 1 end
+    local b = 0
+    while b < maxA - a + 1 and old:byte(#old - b) == new:byte(#new - b) do b = b + 1 end
+    return string.format("TD1|%s|%d|%d|%d|%d|", old:sub(1, 3), checksum(old), checksum(new), a - 1, #old - b - (a - 1))
+        .. new:sub(a, #new - b)
+end
+
+-- What goes on the square for kind t: the whole message p, or a TD1 for it.
+local function encode(t, p)
+    local base = known[t]
+    knownBefore[t] = base
+    known[t] = p
+    if DELTA_KINDS[t] and base and base ~= p and (deltas[t] or 0) < MAX_DELTAS
+        and #p > ns.StripPartBytes() then
+        local d = delta(base, p)
+        if #d <= ns.StripPartBytes() then
+            deltas[t] = (deltas[t] or 0) + 1
+            return d
+        end
+    end
+    deltas[t] = 0
+    return p
+end
+
+-- A message cut short by a tap's answer: the app may not have it.
+local function interrupted(t)
+    lastSent[t] = nil
+    known[t] = knownBefore[t]
+end
 local turn = 0
 local statusAt = 0
 
@@ -215,10 +262,19 @@ for _, e in ipairs({ "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN", "ZONE
 end
 mapEvents:SetScript("OnEvent", function() mapUrgent = true end)
 
+-- Bags that changed (loot, a used item) go next, then the map after a quest or zone event.
+local bagsUrgent = false
+local bagEvents = CreateFrame("Frame")
+bagEvents:RegisterEvent("BAG_UPDATE_DELAYED")
+bagEvents:SetScript("OnEvent", function() bagsUrgent = true end)
+
 local showingTurn
 local function nextMessage()
     local id = C_Map.GetBestMapForUnit("player")
-    if mapUrgent or (id and tostring(id) ~= mapID) then
+    if bagsUrgent then
+        turn = 1  -- the bags (2) are next
+        bagsUrgent = false
+    elseif mapUrgent or (id and tostring(id) ~= mapID) then
         turn = 4  -- the map (5) is next
         mapForce = mapUrgent
     end
@@ -237,15 +293,22 @@ local function nextMessage()
             if turn == 5 then mapAt, mapID = GetTime(), p:match("^TM1|(%d+)") end
             lastSent[turn] = p
             showingTurn = turn
-            return p
+            return encode(turn, p)
         end
+    end
+    -- Nothing changed: time for the item tooltips the app hasn't got yet.
+    local ok, tips = pcall(ns.TooltipsPayload)
+    if ok and tips then
+        showingTurn = nil
+        return tips
     end
 end
 
 -- Everything again, from the start: for an app that was just started or
 -- reinstalled (its Refresh button presses ALT-SHIFT-F12).
 function ns.SendAllAgain()
-    lastSent, chatAgain, sentCount = {}, true, {}
+    lastSent, chatAgain, sentCount, known = {}, true, {}, {}
+    ns.TooltipsAgain()
 end
 
 local refreshOwner = CreateFrame("Frame")
@@ -283,28 +346,36 @@ f:SetScript("OnEvent", function()
     ns.StripShow(ThorCompanionDB.hidden ~= true)
     ticker = C_Timer.NewTicker(0.5, function()
         ticks = ticks + 1
-        if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain = {}, true end
+        if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain, known = {}, true, {} end
         if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
-        if ticks % MAP_REFRESH_TICKS == 0 then lastSent[2], lastSent[5] = nil, nil end
+        if ticks % MAP_REFRESH_TICKS == 0 then lastSent[5], known[5] = nil, nil end
         -- What came of a tap goes out at once; whatever it cut short is sent again.
         local okOpen, opened = pcall(ns.ChatOpenPayload)
         if okOpen and opened then
-            if showingTurn then lastSent[showingTurn] = nil showingTurn = nil end
+            if showingTurn and ns.StripBusy() then interrupted(showingTurn) end showingTurn = nil
             ns.StripWrite(opened)
             return
         end
         local okUse, use = pcall(ns.UsePayload)
         if okUse and use then
-            if showingTurn then lastSent[showingTurn] = nil showingTurn = nil end
+            if showingTurn and ns.StripBusy() then interrupted(showingTurn) end showingTurn = nil
             ns.StripWrite(use)
             return
         end
         -- The zone picture is up: say where, so the app can take it.
         local okPicture, picture = pcall(ns.MapPicturePayload)
         if not okPicture then picture = nil end
-        if picture then ns.StripWrite(picture) lastSent = {} return end
+        if picture then
+            if showingTurn and ns.StripBusy() then interrupted(showingTurn) end showingTurn = nil
+            ns.StripWrite(picture)
+            return
+        end
         local okIcons, icons = pcall(ns.IconsPayload)
-        if okIcons and icons then ns.StripWrite(icons) lastSent = {} return end
+        if okIcons and icons then
+            if showingTurn and ns.StripBusy() then interrupted(showingTurn) end showingTurn = nil
+            ns.StripWrite(icons)
+            return
+        end
         if ns.StripBusy() then return end
         -- What the app has no picture of yet comes up by itself, one at a time.
         local okAuto, shown = pcall(ns.MapPictureAuto)
@@ -319,7 +390,7 @@ end)
 local function setting(key, value, low, high, what)
     value = tonumber(value)
     if not value or value < low or value > high then
-        print("|cff66ccffThor Companion|r " .. what .. " must be " .. low .. " to " .. high)
+        print("|cff66ccffForever Companion|r " .. what .. " must be " .. low .. " to " .. high)
         return
     end
     ThorCompanionDB[key] = value
@@ -345,30 +416,30 @@ SlashCmdList.THORCOMPANION = function(msg)
         setting("shade", shadeStep, 4, 80, "the shade step")
     elseif msg == "chat channels on" or msg == "chat channels off" then
         ns.ChatChannels(msg == "chat channels on")
-        print("|cff66ccffThor Companion|r public channels in the app's chat " .. (msg:sub(-2) == "on" and "on" or "off"))
+        print("|cff66ccffForever Companion|r public channels in the app's chat " .. (msg:sub(-2) == "on" and "on" or "off"))
     elseif msg == "map picture" then
         ns.MapPictureShow()
     elseif msg == "auto on" or msg == "auto off" then
         ThorCompanionDB.auto = (msg == "auto on")
-        print("|cff66ccffThor Companion|r zone pictures and new item icons by themselves " .. (msg == "auto on" and "on" or "off"))
+        print("|cff66ccffForever Companion|r zone pictures and new item icons by themselves " .. (msg == "auto on" and "on" or "off"))
     elseif msg == "icons" then
         ns.IconsShow()
-        print("|cff66ccffThor Companion|r " .. ns.IconsInfo())
+        print("|cff66ccffForever Companion|r " .. ns.IconsInfo())
     elseif msg == "map" then
-        print("|cff66ccffThor Companion|r " .. ns.MapInfo())
+        print("|cff66ccffForever Companion|r " .. ns.MapInfo())
     elseif msg == "info" then
-        print("|cff66ccffThor Companion|r " .. ns.StripInfo())
+        print("|cff66ccffForever Companion|r " .. ns.StripInfo())
     elseif msg == "taps" then
-        print("|cff66ccffThor Companion|r " .. ns.TapsInfo())
+        print("|cff66ccffForever Companion|r " .. ns.TapsInfo())
     elseif msg == "taps on" or msg == "taps off" then
         ns.SetTaps(msg == "taps on")
-        print("|cff66ccffThor Companion|r tap to use " .. (msg == "taps on" and "on" or "off") ..
+        print("|cff66ccffForever Companion|r tap to use " .. (msg == "taps on" and "on" or "off") ..
             (InCombatLockdown() and " (after combat)" or ""))
     elseif msg == "hide" or msg == "show" then
         ThorCompanionDB.hidden = (msg == "hide")
         ns.StripShow(msg == "show")
     else
-        print("|cff66ccffThor Companion|r " .. ns.StripInfo())
+        print("|cff66ccffForever Companion|r " .. ns.StripInfo())
         for _, kind in ipairs({ status, bags, ns.MapPayload }) do
             local ok, p = pcall(kind)
             print(ok and p or ("error: " .. tostring(p)))

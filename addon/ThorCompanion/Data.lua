@@ -178,6 +178,7 @@ end
 -- app turns into minutes left). Only sent again when that list changes; in combat
 -- the game may keep cooldowns secret, then the last list stays.
 local cooldownKey, cooldownPayload = nil, nil
+local lastSent = {}
 local function cooldowns()
     local out, seen = {}, {}
     local now = GetTime()
@@ -195,7 +196,9 @@ local function cooldowns()
         end
     end
     local key = table.concat(out, ",")
-    if key ~= cooldownKey then
+    -- A message sent again (a refresh, an app that just started) gets this moment's
+    -- time: with the old one, the app would count the whole cooldown from now again.
+    if key ~= cooldownKey or lastSent[9] == nil then
         cooldownKey = key
         cooldownPayload = "TC2|" .. math.floor(now + 0.5) .. "|" .. key
     end
@@ -203,8 +206,6 @@ local function cooldowns()
 end
 
 local kinds = { status, bags, namesPayload, chat, map, ns.CharacterPayload, ns.GearPayload, ns.QuestsPayload, cooldowns, ns.SpellsPayload, ns.QuestPagesPayload }
-local lastSent = {}
-
 -- Small changes to a long message (a looted item, a quest objective) go out as
 --   TD1|<kind>|<checksum before>|<checksum after>|<at>|<cut>|<new bytes>
 -- in one part instead of the whole message in several: the app takes its copy of

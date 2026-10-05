@@ -23,6 +23,17 @@ class QuestsTest {
     }
 
     @Test
+    fun readsLevelsAndColours() {
+        val log = QuestLog.parse("TL1|0|0|0\n2\tz\t100\tA\t4/8 Ribs\t27\n3\tz\t100\tB\t\t20\n4\tz\t100\tC\t\t12\n5\tz\t100\tD\t")!!
+        assertEquals(listOf(27, 20, 12, 0), log.quests.map { it.level })
+        assertEquals(listOf("4/8 Ribs"), log.quests[0].objectives.map { it.text })
+        assertEquals(Difficulty.HARD, log.quests[0].difficulty(23))
+        assertEquals(Difficulty.NORMAL, log.quests[1].difficulty(21))
+        assertEquals(Difficulty.TRIVIAL, log.quests[2].difficulty(23))
+        assertEquals(Difficulty.NORMAL, log.quests[3].difficulty(23))
+    }
+
+    @Test
     fun emptyLog() {
         assertEquals(QuestLog(0, 0, 0, emptyList()), QuestLog.parse("TL1|0|0|0"))
         assertNull(QuestLog.parse("TM1|1|2|3"))

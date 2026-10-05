@@ -1,11 +1,12 @@
 -- Quests.lua
 -- The app's Quests tab and its level checker on the Character tab:
---   TL1|lastKill|readyCount|readyXP<newline><questID><tab><state><tab><xp><tab><title><tab><objective>;<objective>...<newline>...
+--   TL1|lastKill|readyCount|readyXP<newline><questID><tab><state><tab><xp><tab><title><tab><objective>;<objective>...<tab><level><newline>...
 -- lastKill is the experience the last kill gave without its rested bonus (0 until
 -- there was one), readyCount and readyXP count all quests ready to turn in and the
 -- experience they give. <state> is r (ready to turn in), z (in this zone) or o
 -- (elsewhere); quests in this zone come first, and the list is cut when it is too
 -- long for the square. Objectives are the game's own text, like "4/8 Boar Ribs".
+-- <level> is the quest's level (0 when unknown), for the colour of its title.
 
 local _, ns = ...
 
@@ -98,7 +99,9 @@ function ns.QuestsPayload()
                 end
             end
             local state = isReady and "r" or (info.isOnMap and "z" or "o")
-            local entry = table.concat({ id, state, xp, clean(info.title, MAX_TITLE), table.concat(objectives, ";") }, "\t")
+            local level = number(info.difficultyLevel) or 0
+            if level <= 0 then level = number(info.level) or 0 end
+            local entry = table.concat({ id, state, xp, clean(info.title, MAX_TITLE), table.concat(objectives, ";"), level }, "\t")
             if state == "o" then elsewhere[#elsewhere + 1] = entry else here[#here + 1] = entry end
         end
     end

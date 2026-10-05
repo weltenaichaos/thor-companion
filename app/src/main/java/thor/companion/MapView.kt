@@ -32,6 +32,8 @@ class MapView(context: Context) : View(context) {
     var questAreas = true
     /** A quest title whose places are marked more strongly (tapped in the Quests tab). */
     var highlight: String? = null
+    /** The selected quest's nearest place and how far it is ("120 yd"), written under its ring. */
+    var targetNote: Pair<MapPlace, String>? = null
     /** Called with the place nearest to a tap. */
     var onPlace: (MapPlace) -> Unit = {}
     /** Called after a pinch changed [close] or [span]. */
@@ -58,6 +60,7 @@ class MapView(context: Context) : View(context) {
     }
     private val areaText = Paint(text).apply { textAlign = Paint.Align.CENTER; color = Color.rgb(255, 226, 130); textSize = 10 * d }
     private val marked = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 3 * d }
+    private val distanceText = Paint(text).apply { textAlign = Paint.Align.CENTER; color = Color.WHITE; textSize = 13 * d; isFakeBoldText = true }
     private val bounds = android.graphics.RectF()
     private val arrow = Path()
     private val me = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
@@ -147,6 +150,11 @@ class MapView(context: Context) : View(context) {
             val r = if (place.kind == 'q') (0.03 / shown * w).toFloat() else 13 * d
             canvas.drawCircle(sx(place.x), sy(place.y), r, marked)
             if (place.kind == 'q' && !zoomed) canvas.drawText(short(place.label), sx(place.x), sy(place.y) + 4 * d, areaText)
+        }
+        targetNote?.let { (place, note) ->
+            if (note.isEmpty() || title == null) return@let
+            val r = if (place.kind == 'q') (0.03 / shown * w).toFloat() else 13 * d
+            canvas.drawText(note, sx(place.x), sy(place.y) + r + 14 * d, distanceText)
         }
 
         if (px != null && py != null) {

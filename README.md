@@ -37,9 +37,11 @@ later on will be one key press per tap.
    The Quests tab lists your quest log, and a level checker (also on the Character tab)
    shows the experience to the next level, rested experience, how many kills that is
    at the last kill's experience, and what the quests ready to turn in give.
-   Tapping a quest there also starts the quest arrow at the top of the app: which way
-   to go on the map (north up, like the map) and how many yards to its nearest area,
-   or to where you turn it in once it is ready.
+   Quests show their level in the game's colours and, in this zone, how many yards
+   away they are, nearest first. Tapping one selects it: a white ring on its places,
+   the map zooms to show you and the nearest one, and a line above the map keeps the
+   yards up to date (✕ clears it). The zone's size in yards comes from the game, or
+   from walking around a little where the game doesn't say (`/thor map` shows which).
    Long-press an item for its type, levels, sell price and what its tooltip says (stats,
    "Use: ..."; the addon sends tooltips only when nothing else is waiting). The Bags tab
    sorts by bag order, type, quality or value, and shows what your grey items sell for.

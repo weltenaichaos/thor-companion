@@ -1,14 +1,39 @@
 package thor.companion.strip
 
 /** One quest in the log: ready to turn in, in this zone, the experience it gives and its objectives. */
-data class Quest(val id: Int, val ready: Boolean, val here: Boolean, val xp: Long, val title: String, val objectives: List<Objective>)
+data class Quest(
+    val id: Int, val ready: Boolean, val here: Boolean, val xp: Long, val title: String, val objectives: List<Objective>,
+    /** The quest's level, 0 when the addon didn't say. */
+    val level: Int = 0,
+) {
+    /** How hard it is for you at [playerLevel], like the game's quest colours. */
+    fun difficulty(playerLevel: Int): Difficulty = when {
+        level <= 0 || playerLevel <= 0 -> Difficulty.NORMAL
+        level - playerLevel >= 5 -> Difficulty.VERY_HARD
+        level - playerLevel >= 3 -> Difficulty.HARD
+        level - playerLevel >= -2 -> Difficulty.NORMAL
+        level >= playerLevel - greenRange(playerLevel) -> Difficulty.EASY
+        else -> Difficulty.TRIVIAL
+    }
+
+    private fun greenRange(playerLevel: Int) = when {
+        playerLevel <= 9 -> 5
+        playerLevel <= 19 -> 6
+        playerLevel <= 29 -> 7
+        playerLevel <= 39 -> 8
+        else -> 9
+    }
+}
+
+/** The game's quest colours: red, orange, yellow, green, grey. */
+enum class Difficulty { VERY_HARD, HARD, NORMAL, EASY, TRIVIAL }
 
 /** An objective in the game's words ("4/8 Boar Ribs"), and whether it is done. */
 data class Objective(val text: String, val done: Boolean)
 
 /**
  * The quest log from the addon's
- * `TL1|lastKill|readyCount|readyXP\n<id>\t<r|z|o>\t<xp>\t<title>\t<objective>;<objective>...`
+ * `TL1|lastKill|readyCount|readyXP\n<id>\t<r|z|o>\t<xp>\t<title>\t<objective>;<objective>...\t<level>`
  * (see addon/ThorCompanion/Quests.lua). [lastKill] is the experience of the last kill
  * without its rested bonus, 0 when not known yet. The ready numbers cover the whole
  * log, also quests that did not fit in the message.
@@ -21,11 +46,12 @@ data class QuestLog(val lastKill: Long, val readyCount: Int, val readyXp: Long, 
             val head = rows[0].split('|')
             if (head.size < 3) return null
             val quests = rows.drop(1).mapNotNull { row ->
-                val f = row.split('\t', limit = 5)
+                val f = row.split('\t', limit = 6)
                 if (f.size < 4) return@mapNotNull null
                 val objectives = f.getOrNull(4).orEmpty().split(';').filter { it.isNotEmpty() }
                     .map { if (it.startsWith("+")) Objective(it.substring(1), true) else Objective(it, false) }
-                Quest(f[0].toIntOrNull() ?: return@mapNotNull null, f[1] == "r", f[1] != "o", f[2].toLongOrNull() ?: 0, f[3], objectives)
+                Quest(f[0].toIntOrNull() ?: return@mapNotNull null, f[1] == "r", f[1] != "o", f[2].toLongOrNull() ?: 0, f[3], objectives,
+                    f.getOrNull(5)?.trim()?.toIntOrNull() ?: 0)
             }
             return QuestLog(head[0].toLongOrNull() ?: 0, head[1].toIntOrNull() ?: 0, head[2].toLongOrNull() ?: 0, quests)
         }

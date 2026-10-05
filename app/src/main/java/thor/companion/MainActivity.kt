@@ -25,6 +25,7 @@ import thor.companion.strip.Cooldowns
 import thor.companion.strip.BagItem
 import thor.companion.strip.Compass
 import thor.companion.strip.Delta
+import thor.companion.strip.Difficulty
 import thor.companion.strip.ItemTips
 import thor.companion.strip.ItemUse
 import thor.companion.strip.IconPicture
@@ -134,7 +135,7 @@ class MainActivity : Activity() {
                 textSize = 15f
                 gravity = Gravity.CENTER
                 typeface = Typeface.DEFAULT_BOLD
-                setOnClickListener { mapHighlight = null; show(p) }
+                setOnClickListener { show(p) }
             }
             tabs[p] = b
             header.addView(b, LinearLayout.LayoutParams(0, dp(44), if (p == Panel.CHARACTER) 1.25f else 1f))
@@ -171,21 +172,6 @@ class MainActivity : Activity() {
         footer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(header)
         root.addView(statusRow)
-        compass = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = Theme.box(context, SURFACE, 14, Theme.withAlpha(ACCENT, 120))
-            setPadding(dp(10), dp(6), dp(6), dp(6))
-            visibility = View.GONE
-            setOnClickListener { tracked?.let { mapHighlight = it }; show(Panel.MAP) }
-        }
-        compassArrow = ArrowView(this)
-        compassText = line("", TEXT, 14f).apply { setPadding(dp(10), 0, 0, 0) }
-        compass.addView(compassArrow, LinearLayout.LayoutParams(dp(26), dp(26)))
-        compass.addView(compassText, LinearLayout.LayoutParams(0, -2, 1f))
-        compass.addView(chip("✕") { tracked = null; getPreferences(MODE_PRIVATE).edit().remove("tracked").apply(); updateCompass() },
-            LinearLayout.LayoutParams(dp(44), -2))
-        root.addView(compass, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         root.addView(toolbar)
         scroll = ScrollView(this).apply { addView(content); isVerticalScrollBarEnabled = false }
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -564,6 +550,7 @@ class MainActivity : Activity() {
         // While you type a chat message, the box below stays as it is.
         if (composing == null) footer.removeAllViews()
         mapView = null
+        questLine = null
         updateLoadButton()
         updateBadges()
         val s = state
@@ -696,7 +683,7 @@ class MainActivity : Activity() {
             close = prefs.getBoolean("mapClose", false)
             span = prefs.getFloat("mapSpan", 0.4f).toDouble()
             questAreas = prefs.getBoolean("mapQuests", true)
-            highlight = mapHighlight
+            highlight = tracked
             onPlace = { p ->
                 say(MapView.kindName(p.kind) + (if (p.label.isEmpty()) "" else ": ${p.label}") +
                     String.format(Locale.US, " (%.1f, %.1f)", p.x * 100, p.y * 100))
@@ -739,6 +726,23 @@ class MainActivity : Activity() {
         controls.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f))
         controls.addView(take)
         content.addView(controls, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4); bottomMargin = dp(6) })
+        // The selected quest: how far, and ✕ to clear it.
+        val questRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = Theme.box(context, SURFACE, 12, Theme.withAlpha(Color.WHITE, 90))
+            setPadding(dp(12), dp(4), dp(4), dp(4))
+        }
+        val questText = line("", TEXT, 14f).apply { setPadding(0, 0, 0, 0) }
+        questRow.addView(questText, LinearLayout.LayoutParams(0, -2, 1f))
+        questRow.addView(chip("✕") {
+            tracked = null
+            getPreferences(MODE_PRIVATE).edit().remove("tracked").apply()
+            view.highlight = null
+            updateCompass()
+        }, LinearLayout.LayoutParams(dp(44), -2))
+        content.addView(questRow, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
+        questLine = questText
         content.addView(view, LinearLayout.LayoutParams(-1, maxOf(dp(240), scroll.height - dp(110))))
         val note = line("", DIM, 12f).apply { setPadding(dp(4), dp(4), 0, 0) }
         content.addView(note)
@@ -748,6 +752,7 @@ class MainActivity : Activity() {
         mapTitle = title
         zoomed()
         updateMap()
+        updateCompass()
     }
 
     private var pictureButton: TextView? = null
@@ -878,66 +883,94 @@ class MainActivity : Activity() {
             content.addView(empty("Your quest log is empty", ""))
             return
         }
-        for ((title, list) in listOf("Ready to turn in" to log.quests.filter { it.ready },
-            "In this zone" to log.quests.filter { it.here && !it.ready }, "Elsewhere" to log.quests.filter { !it.here && !it.ready })) {
+        // Nearest first, so the next thing to do is on top.
+        val near = log.quests.associateWith { heading(it.title) }
+        fun byDistance(list: List<Quest>) = list.sortedBy { q -> near[q]?.let { h -> h.yards ?: 0 } ?: Int.MAX_VALUE }
+        for ((title, list) in listOf("Ready to turn in" to byDistance(log.quests.filter { it.ready }),
+            "In this zone" to byDistance(log.quests.filter { it.here && !it.ready }), "Elsewhere" to log.quests.filter { !it.here && !it.ready })) {
             if (list.isEmpty()) continue
             content.addView(section(title))
-            for (q in list) content.addView(questCard(q), cardParams())
+            for (q in list) content.addView(questCard(q, near[q]), cardParams())
         }
     }
 
-    private fun questCard(q: Quest): View {
-        val box = card().apply { setPadding(dp(12), dp(8), dp(12), dp(8)) }
+    private fun questCard(q: Quest, h: Compass.Heading?): View {
+        val selected = q.title == tracked
+        val box = card().apply {
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            if (selected) background = Theme.box(context, SURFACE, 14, Color.WHITE)
+        }
         val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        top.addView(line(q.title, if (q.ready) ACCENT else TEXT, 15f, bold = true).apply { setPadding(0, 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        // The title in the game's quest colours: red too hard, yellow right, green easy, grey trivial.
+        val colour = when (q.difficulty(state?.level ?: 0)) {
+            Difficulty.VERY_HARD -> Color.rgb(255, 64, 64)
+            Difficulty.HARD -> Color.rgb(255, 128, 64)
+            Difficulty.NORMAL -> Color.rgb(255, 210, 0)
+            Difficulty.EASY -> Color.rgb(64, 192, 64)
+            Difficulty.TRIVIAL -> Color.rgb(160, 160, 160)
+        }
+        val name = if (q.level > 0) "[${q.level}] ${q.title}" else q.title
+        top.addView(line(name, colour, 15f, bold = true).apply { setPadding(0, 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
         if (q.xp > 0) top.addView(line(String.format(Locale.US, "%,d XP", q.xp), Theme.XP_TEXT, 12f).apply { setPadding(dp(8), 0, 0, 0) })
         box.addView(top)
         if (q.ready) box.addView(line("Ready to turn in", Theme.GOOD, 12f).apply { setPadding(0, dp(2), 0, 0) })
+        if (h != null) box.addView(line(distance(h), if (selected) Color.WHITE else DIM, 12f).apply { setPadding(0, dp(2), 0, 0) })
         for (o in q.objectives) {
             box.addView(line((if (o.done) "✓ " else "• ") + o.text, if (o.done) DIM else TEXT, 13f).apply { setPadding(dp(4), dp(1), 0, 0) })
         }
         box.setOnClickListener {
-            // Its area on the map, if the game shows one in this zone.
-            mapHighlight = q.title
+            // Selects it: its places get a white ring on the map, which zooms to show you and the nearest one.
             tracked = q.title
             getPreferences(MODE_PRIVATE).edit().putString("tracked", q.title).apply()
-            updateCompass()
+            val h = heading(q.title)
+            val x = state?.x; val y = state?.y
+            if (h != null && x != null && y != null) {
+                val far = maxOf(Math.abs(h.place.x - x), Math.abs(h.place.y - y) * 1.5)
+                getPreferences(MODE_PRIVATE).edit().putBoolean("mapClose", far < 0.38)
+                    .putFloat("mapSpan", (far * 2.6).coerceIn(MapView.MIN_SPAN, 1.0).toFloat()).apply()
+            }
             show(Panel.MAP)
-            say("${q.title}: marked with a white ring on the map, and the arrow at the top points the way")
+            say(if (h == null) "${q.title}: not on this zone's map" else "${q.title}: marked with a white ring on the map")
         }
         return box
     }
 
-    /** Quest whose area the map marks (after a tap on it in the Quests tab). */
-    private var mapHighlight: String? = null
-
-    /** The quest the arrow at the top points to (the last one tapped in the Quests tab), until ✕. */
+    /** The selected quest (the last one tapped in the Quests tab): a white ring on the map and its distance, until ✕. */
     private var tracked: String? = null
-    private lateinit var compass: LinearLayout
-    private lateinit var compassArrow: ArrowView
-    private lateinit var compassText: TextView
 
-    /** The quest arrow: which way on the map and how far, from where you are. */
-    private fun updateCompass() {
-        val title = tracked
-        if (title == null) { compass.visibility = View.GONE; return }
-        compass.visibility = View.VISIBLE
+    /** Where the nearest place of quest [title] is from you on this zone's map, or null. */
+    private fun heading(title: String): Compass.Heading? {
         val s = state
-        val map = zoneMap?.takeIf { it.mapId == s?.mapId }
-        val x = s?.x; val y = s?.y
-        val h = if (map != null && x != null && y != null && x > 0) Compass.toQuest(map, title, x, y) else null
-        if (h == null) {
-            compassArrow.visibility = View.INVISIBLE
-            compassText.text = "$title  ·  not on this zone's map"
-            return
-        }
-        compassArrow.visibility = View.VISIBLE
-        // North is up, as on the map, so the arrow and the map agree whichever way you face.
-        compassArrow.pointTo(Math.toDegrees(h.bearing).toFloat())
-        val what = if (h.place.kind == 'Q') "turn in" else if (h.place.kind == 'a') "start" else "objective"
-        val far = h.yards?.let { if (it < 15) "here" else "$it yd" }
-        compassText.text = listOfNotNull(title, far, what).joinToString("  ·  ")
+        val map = zoneMap?.takeIf { it.mapId == s?.mapId } ?: return null
+        val x = s?.x ?: return null
+        val y = s.y ?: return null
+        return if (x > 0) Compass.toQuest(map, title, x, y) else null
     }
+
+    /** "120 yd to the objective" for a quest, or null when it isn't on this map. */
+    private fun distance(h: Compass.Heading): String {
+        val what = when (h.place.kind) { 'Q' -> "to turn it in"; 'a' -> "to where it starts"; else -> "to the objective" }
+        return when (val yd = h.yards) {
+            null -> "On the map ($what)"
+            in 0..14 -> "You're there"
+            else -> "$yd yd $what"
+        }
+    }
+
+    /** The selected quest's line on the Map tab, kept up to date as you walk. */
+    private fun updateCompass() {
+        val line = questLine ?: return
+        val title = tracked
+        val row = line.parent as? View
+        if (title == null) { row?.visibility = View.GONE; mapView?.targetNote = null; return }
+        row?.visibility = View.VISIBLE
+        val h = heading(title)
+        line.text = if (h == null) "$title  ·  not on this zone's map" else "$title  ·  ${distance(h)}"
+        mapView?.targetNote = h?.let { it.place to (it.yards?.let { yd -> if (yd < 15) "here" else "$yd yd" } ?: "") }
+        mapView?.invalidate()
+    }
+
+    private var questLine: TextView? = null
 
     /**
      * The level checker: how far to the next level, the rested experience, how many

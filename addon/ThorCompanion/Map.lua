@@ -99,6 +99,8 @@ local function places(mapID)
     return entries
 end
 
+local sizeSource = "not asked yet"
+
 -- The map message for where you are now, or nil when the game has no map here.
 function ns.MapPayload()
     local mapID = C_Map.GetBestMapForUnit("player")
@@ -107,6 +109,7 @@ function ns.MapPayload()
     local parent = info and info.parentMapID and info.parentMapID > 0 and C_Map.GetMapInfo(info.parentMapID)
     -- The zone's size in yards, so the app can say how far away a place is.
     local okSize, width, height = pcall(C_Map.GetMapWorldSize, mapID)
+    if type(width) ~= "number" or type(height) ~= "number" then width, height = 0, 0 end
     if not okSize or type(width) ~= "number" or type(height) ~= "number" or width <= 0 then
         -- Without GetMapWorldSize: the world positions of two opposite corners.
         width, height = 0, 0
@@ -118,7 +121,18 @@ function ns.MapPayload()
         if ok and a and b then
             -- World x runs north and y west, so the map's width is the y difference.
             width, height = math.abs(a.y - b.y), math.abs(a.x - b.x)
+            sizeSource = "corners"
         end
+    else
+        sizeSource = "GetMapWorldSize"
+    end
+    -- Neither: what walking around measured (see measureZone).
+    local measured = ThorCompanionDB and ThorCompanionDB.zoneSize and ThorCompanionDB.zoneSize[mapID]
+    if (width <= 0 or height <= 0) and measured and measured.w and measured.h then
+        width, height = measured.w, measured.h
+        sizeSource = "measured"
+    elseif width <= 0 or height <= 0 then
+        width, height, sizeSource = 0, 0, "unknown so far"
     end
     local head = "TM1|" .. mapID .. "|" .. label(info and info.name):gsub("|", "/") .. "|" .. label(parent and parent.name):gsub("|", "/")
         .. string.format("|%d|%d", width, height)
@@ -286,8 +300,38 @@ end
 -- For /thor map: what the map picture did last, and the places message.
 function ns.MapInfo()
     local ok, p = pcall(ns.MapPayload)
-    return "zone picture: " .. note .. "\n" .. (ok and (p or "no map here") or ("error: " .. tostring(p)))
+    return "zone picture: " .. note .. "\nzone size from " .. sizeSource .. "\n" .. (ok and (p or "no map here") or ("error: " .. tostring(p)))
 end
+
+-- The zone's size in yards from walking: the world position (UnitPosition, yards)
+-- against the map position (0..1) at two points far enough apart in each direction.
+local sizeSamples = {}
+local function measureZone()
+    local mapID = C_Map.GetBestMapForUnit("player")
+    if not mapID then return end
+    local pos = C_Map.GetPlayerMapPosition(mapID, "player")
+    local okW, wy, wx = pcall(UnitPosition, "player")
+    if not pos or not okW or type(wy) ~= "number" or type(wx) ~= "number" then return end
+    if issecretvalue and (issecretvalue(wy) or issecretvalue(wx)) then return end
+    local mx, my = pos:GetXY()
+    if not mx or (mx == 0 and my == 0) then return end
+    local first = sizeSamples[mapID]
+    if not first then sizeSamples[mapID] = { mx, my, wy, wx } return end
+    ThorCompanionDB.zoneSize = ThorCompanionDB.zoneSize or {}
+    local known = ThorCompanionDB.zoneSize[mapID] or {}
+    -- UnitPosition gives (y, x) with world x north and y west: the map's x runs
+    -- against world y, its y against world x.
+    local dx, dy = mx - first[1], my - first[2]
+    if math.abs(dx) > 0.02 then known.w = math.floor(math.abs((wy - first[3]) / dx) + 0.5) end
+    if math.abs(dy) > 0.02 then known.h = math.floor(math.abs((wx - first[4]) / dy) + 0.5) end
+    if known.w or known.h then
+        -- One direction measured is enough: zone maps are 3:2.
+        known.w = known.w or (known.h and math.floor(known.h * 1.5 + 0.5))
+        known.h = known.h or (known.w and math.floor(known.w / 1.5 + 0.5))
+        ThorCompanionDB.zoneSize[mapID] = known
+    end
+end
+C_Timer.NewTicker(5, function() if not InCombatLockdown() then pcall(measureZone) end end)
 
 -- The picture key, bound out of combat like the bag keys (and off with /thor taps off).
 local keyOwner = CreateFrame("Frame")

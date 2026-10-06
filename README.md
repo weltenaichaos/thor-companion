@@ -115,7 +115,11 @@ when the game starts. In game:
   the message (a message you start with "/" yourself goes in as written) and
   presses Enter. The line goes in as one paste (the clipboard, then CTRL-V); TE1's
   last field, the box's text length, confirms it arrived. If it doesn't, the app types
-  the line key by key instead, and keeps doing so until it restarts. The addon never opens the chat box itself: the game blocks addons that
+  the line key by key instead, and keeps doing so until it restarts.
+  Above the text field sit your quick replies (omw, 1 min, ty, brb, ready to start):
+  one tap sends one to the same place; "+ Save typed text" adds what you typed, a
+  long-press removes one.
+  The addon never opens the chat box itself: the game blocks addons that
   do (the "blocked from an action only available to the Blizzard UI" popup).
 - The Exit button at the end of the status line closes the app (tap it twice): it saves
   what it shows, ends its key helper and leaves the recent apps.

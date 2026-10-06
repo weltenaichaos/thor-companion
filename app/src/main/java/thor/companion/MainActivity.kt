@@ -1352,6 +1352,37 @@ class MainActivity : Activity() {
         field.setOnEditorActionListener { _, action, _ ->
             if (action == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) { send(); true } else false
         }
+        // Quick replies: one tap sends one of your short messages to the same place.
+        val quick = Flow(this, dp(6)).apply { setPadding(0, dp(4), 0, 0) }
+        fun fillQuick() {
+            quick.removeAllViews()
+            for (reply in quickReplies()) {
+                quick.addView(chip(reply) {
+                    closeCompose()
+                    sendChat(label, command, reply)
+                }.apply {
+                    setOnLongClickListener {
+                        saveQuickReplies(quickReplies() - reply)
+                        say("Quick reply \"$reply\" removed")
+                        fillQuick()
+                        true
+                    }
+                })
+            }
+            quick.addView(chip("+ Save typed text") {
+                val text = field.text.toString().trim()
+                when {
+                    text.isEmpty() -> say("Type a message first, then tap + Save typed text to keep it as a quick reply")
+                    text in quickReplies() -> say("\"$text\" is already a quick reply")
+                    else -> { saveQuickReplies(quickReplies() + text); say("Saved \"$text\" as a quick reply"); fillQuick() }
+                }
+            }.apply {
+                background = Theme.box(context, Color.TRANSPARENT, 18, DIM)
+                setTextColor(DIM)
+            })
+        }
+        fillQuick()
+        footer.addView(quick)
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, 0) }
         row.addView(field, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
         row.addView(chip("Send") { send() }.apply { background = Theme.box(context, ACCENT, 18); setTextColor(Color.BLACK) })
@@ -1364,6 +1395,15 @@ class MainActivity : Activity() {
             getSystemService(android.view.inputmethod.InputMethodManager::class.java)
                 .showSoftInput(field, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
         }
+    }
+
+    /** Your quick replies, in the order you saved them; a few to start with. */
+    private fun quickReplies(): List<String> =
+        getPreferences(MODE_PRIVATE).getString("quickReplies", null)?.split('\n')?.filter { it.isNotBlank() }
+            ?: listOf("omw", "1 min", "ty", "brb", "ready")
+
+    private fun saveQuickReplies(list: List<String>) {
+        getPreferences(MODE_PRIVATE).edit().putString("quickReplies", list.joinToString("\n")).apply()
     }
 
     private fun closeCompose() {

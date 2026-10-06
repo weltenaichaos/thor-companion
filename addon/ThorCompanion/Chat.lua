@@ -81,16 +81,31 @@ local function remember(name)
 end
 
 -- Whether the chat box opened, for the app:
---   TE1|n|open|<group>   or   TE1|n|closed|<group>
+--   TE1|n|open|<group>|<length>   or   TE1|n|closed|<group>|<length>
 -- n counts the times the box got the cursor; <group> is the command for your
 -- group right now ("/p ", "/raid " or "/i "). The app types your message only
 -- after "open", so no letter ever reaches the game as a key binding (W would walk).
+-- <length> is how long the box's text is (in bytes): said again when it changes in
+-- the first seconds after the box opened, so the app sees whether its paste arrived.
 local openN, openPending, openedAt = 0, false, -100
 
-local function activeEditBox()
+local WATCH = 8   -- seconds after the box opened in which text changes are reported
+
+local function editBox()
     local get = (ChatFrameUtil and ChatFrameUtil.GetActiveWindow) or ChatEdit_GetActiveWindow
-    local eb = get and get()
+    return get and get()
+end
+
+local function activeEditBox()
+    local eb = editBox()
     return eb and eb:IsShown() and eb:HasFocus()
+end
+
+local function textLength()
+    local eb = editBox()
+    local text = eb and eb.GetText and eb:GetText()
+    if type(text) ~= "string" or (issecretvalue and issecretvalue(text)) then return 0 end
+    return #text
 end
 
 local function groupCommand()
@@ -102,7 +117,7 @@ end
 function ns.ChatOpenPayload()
     if not openPending or GetTime() - openedAt < 0.1 then return nil end
     openPending = false
-    return "TE1|" .. openN .. "|" .. (activeEditBox() and "open" or "closed") .. "|" .. groupCommand()
+    return "TE1|" .. openN .. "|" .. (activeEditBox() and "open" or "closed") .. "|" .. groupCommand() .. "|" .. textLength()
 end
 
 -- Only watched, never called: an addon that opens the chat box itself makes the
@@ -115,6 +130,9 @@ local function hookEditBoxes()
             hooked[eb] = true
             eb:HookScript("OnEditFocusGained", function()
                 openN, openPending, openedAt = openN + 1, true, GetTime()
+            end)
+            eb:HookScript("OnTextChanged", function()
+                if GetTime() - openedAt < WATCH then openPending = true end
             end)
         end
     end

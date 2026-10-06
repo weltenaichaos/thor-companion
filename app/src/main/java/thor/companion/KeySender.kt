@@ -21,7 +21,7 @@ object KeySender {
         "ALT" to KeyEvent.KEYCODE_ALT_LEFT,
     ) + (1..12).associate { "F$it" to KeyEvent.KEYCODE_F1 + it - 1 } +
         (0..9).associate { "NUMPAD$it" to KeyEvent.KEYCODE_NUMPAD_0 + it } +
-        mapOf("ENTER" to KeyEvent.KEYCODE_ENTER, "ESCAPE" to KeyEvent.KEYCODE_ESCAPE)
+        mapOf("ENTER" to KeyEvent.KEYCODE_ENTER, "ESCAPE" to KeyEvent.KEYCODE_ESCAPE, "V" to KeyEvent.KEYCODE_V)
 
     private var socket: LocalSocket? = null
     private var reader: BufferedReader? = null

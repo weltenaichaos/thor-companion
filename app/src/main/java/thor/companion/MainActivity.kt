@@ -303,7 +303,9 @@ class MainActivity : Activity() {
                     message.startsWith("TW1|") -> MapPicture.parse(message)?.let { takeMapPicture(it, message) }
                     message.startsWith("TI1|") -> IconPicture.parse(message)?.let { takeIcons(it, assembler.lastSeq) }
                     message.startsWith("TE1|") -> message.split('|').let { f ->
-                        f.getOrNull(1)?.toIntOrNull()?.let { n -> chatBox = Triple(n, f.getOrNull(2) == "open", f.getOrNull(3).orEmpty()) }
+                        f.getOrNull(1)?.toIntOrNull()?.let { n ->
+                            chatBox = ChatBox(n, f.getOrNull(2) == "open", f.getOrNull(3).orEmpty(), f.getOrNull(4)?.toIntOrNull())
+                        }
                     }
                     message.startsWith("TU1|") -> ItemUse.parse(message)?.let { runOnUiThread { onUse(it) } }
                     message.startsWith("TC2|") -> Cooldowns.parse(message)?.let { runOnUiThread { onCooldowns(it) } }
@@ -1357,12 +1359,20 @@ class MainActivity : Activity() {
         if (panel == Panel.CHAT) render() else footer.removeAllViews()
     }
 
-    /** The addon's last word on the chat box: its count, whether it opened, and your group's command. */
-    @Volatile private var chatBox: Triple<Int, Boolean, String>? = null
+    /**
+     * The addon's last word on the chat box: how often it got the cursor, whether it is
+     * open, your group's command, and how long its text is (null from addons before 0.18.4).
+     */
+    data class ChatBox(val n: Int, val open: Boolean, val group: String, val length: Int?)
+
+    @Volatile private var chatBox: ChatBox? = null
+
+    /** False once a paste didn't reach the game: from then on messages are typed. */
+    @Volatile private var pasteWorks = true
 
     private fun sendChat(label: String, command: String, text: String) {
         val target = gameDisplay()
-        val before = chatBox?.first
+        val before = chatBox?.n
         lastKeyAt = SystemClock.uptimeMillis()
         say("$label: sending…")
         keys.execute {
@@ -1370,24 +1380,54 @@ class MainActivity : Activity() {
             if (err != null && !err.startsWith("(focus")) return@execute runOnUiThread { say("$label not sent: $err") }
             // Wait for the addon to see the box open; never type into the game without it.
             val until = SystemClock.uptimeMillis() + 3000
-            while (SystemClock.uptimeMillis() < until && chatBox?.first == before) {
+            while (SystemClock.uptimeMillis() < until && chatBox?.n == before) {
                 lastKeyAt = SystemClock.uptimeMillis()
                 SystemClock.sleep(50)
             }
             val box = chatBox
-            if (box == null || box.first == before || !box.second) {
+            if (box == null || box.n == before || !box.open) {
                 return@execute runOnUiThread { say("$label not sent: the game's chat box didn't open (a game menu open, or the addon older than v41?)") }
             }
             // Your own "/1 ...", "/2 ..." and so on goes in as you wrote it.
             val prefix = when {
                 text.startsWith("/") -> ""
-                command == GROUP -> box.third.ifEmpty { "/p " }
+                command == GROUP -> box.group.ifEmpty { "/p " }
                 else -> command
             }
-            val typed = KeySender.type(this, target, prefix + text)
-            if (typed != null && !typed.startsWith("(focus")) return@execute runOnUiThread { say("$label not sent: $typed") }
+            // The whole line goes in with one paste (CTRL-V) when the game takes pastes:
+            // the box opens empty, so any text the addon then reports came from the paste.
+            // If none shows up, the line is typed key by key after all, from then on too.
+            val line = prefix + text
+            var pasted = false
+            val tried = pasteWorks && box.length == 0
+            if (tried) {
+                runOnUiThread {
+                    getSystemService(android.content.ClipboardManager::class.java)
+                        .setPrimaryClip(android.content.ClipData.newPlainText("chat", line))
+                }
+                SystemClock.sleep(150)
+                KeySender.send(this, target, "CTRL-V")
+                // The game may turn "/w Name " into the box's whisper mode: then only your text is left.
+                val bytes = text.toByteArray(Charsets.UTF_8).size
+                val wait = SystemClock.uptimeMillis() + 2500
+                while (SystemClock.uptimeMillis() < wait) {
+                    val now = chatBox
+                    if (now != null && now.n == box.n && (now.length ?: 0) >= bytes) { pasted = true; break }
+                    lastKeyAt = SystemClock.uptimeMillis()
+                    SystemClock.sleep(50)
+                }
+                if (!pasted) pasteWorks = false
+            }
+            if (!pasted) {
+                val typed = KeySender.type(this, target, line)
+                if (typed != null && !typed.startsWith("(focus")) return@execute runOnUiThread { say("$label not sent: $typed") }
+            }
             KeySender.send(this, target, "ENTER")
-            runOnUiThread { say("$label: sent") }
+            runOnUiThread { say(when {
+                pasted -> "$label: sent (pasted)"
+                tried -> "$label: sent (typed: the game didn't take the paste, so it types until the app restarts)"
+                else -> "$label: sent"
+            }) }
         }
     }
 

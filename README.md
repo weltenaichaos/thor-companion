@@ -111,9 +111,11 @@ when the game starts. In game:
   each, or a tap on a line (to whisper its sender), opens a text field with the keyboard
   on the bottom screen. Send presses CTRL-SHIFT-F8, which the addon binds to the game's
   own Open Chat command (like Enter), waits until the addon says the box is open (TE1),
-  types "/r ", "/s ", "/g ", "/1 " (a channel), your group's command or "/w Name " with
+  puts in "/r ", "/s ", "/g ", "/1 " (a channel), your group's command or "/w Name " with
   the message (a message you start with "/" yourself goes in as written) and
-  presses Enter. The addon never opens the chat box itself: the game blocks addons that
+  presses Enter. The line goes in as one paste (the clipboard, then CTRL-V); TE1's
+  last field, the box's text length, confirms it arrived. If it doesn't, the app types
+  the line key by key instead, and keeps doing so until it restarts. The addon never opens the chat box itself: the game blocks addons that
   do (the "blocked from an action only available to the Blizzard UI" popup).
 - ALT-SHIFT-F12 makes the addon send everything again; the app's "Load from the game"
   button presses it (shown while the bags or character haven't arrived, for example right

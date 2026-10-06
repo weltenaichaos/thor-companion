@@ -1,10 +1,11 @@
 package thor.companion.strip
 
-import javax.imageio.ImageIO
+import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class StripDecoderTest {
@@ -13,100 +14,146 @@ class StripDecoderTest {
         override fun rgb(x: Int, y: Int) = data[y * width + x]
     }
 
-    /** The bottom 120 rows of a real Thor screenshot (1920x1080, addon v2, 2026-10-01). */
+    /** The same, drawn as one line along the top edge (/thor shape line). */
     @Test
-    fun decodesRealThorScreenshot() {
-        val img = ImageIO.read(javaClass.getResourceAsStream("/thor-strip-v2.png"))
+    fun decodesLineDrawnByTheAddon() {
+        val img = javax.imageio.ImageIO.read(javaClass.getResourceAsStream("/addon-line-v4.png"))
         val px = ArrayPixels(img.width, img.height, img.getRGB(0, 0, img.width, img.height, null, 0, img.width))
-        val frame = assertIs<StripDecoder.Result.Ok>(StripDecoder.decode(px)).frame
+        val frame = decodeOk(px)
         assertTrue(frame.crcOk)
-        assertEquals(15, frame.seq)
-        assertEquals(2, frame.version)
-        assertEquals(107, frame.length)
-        assertEquals(9.0, frame.cellPx)
-        assertEquals(
-            "TC1|Xandra|5|409|1420|0.3187|0.6556|17/26|4604:7,159:5,6948:1,2589:17,11848:1,3270:1,3263:1,3274:1,247841:1",
-            frame.payload,
-        )
+        assertEquals("TS1|Xandra|5|40912|1420|0.3187|0.6556", String(frame.payload))
+    }
+
+    /** Drawn by the real Strip.lua (in a mock game), upscaled and colour-shifted like on the Thor. */
+    @Test
+    fun decodesSquareDrawnByTheAddon() {
+        val img = javax.imageio.ImageIO.read(javaClass.getResourceAsStream("/addon-square-v4.png"))
+        val px = ArrayPixels(img.width, img.height, img.getRGB(0, 0, img.width, img.height, null, 0, img.width))
+        val frame = decodeOk(px)
+        assertTrue(frame.crcOk)
+        assertEquals("TS1|Xandra|5|40912|1420|0.3187|0.6556", String(frame.payload))
+        assertEquals(1, frame.parts)
     }
 
     @Test
-    fun decodesSyntheticFrameThroughThorLikeDisplay() {
-        val payload = "TC1|Ünïcode|60|1234567|1453|0.5000|0.2500|3/98|" + (1..40).joinToString(",") { "${it * 1000}:$it" }
-        val px = render(payload, seq = 7)
-        val frame = assertIs<StripDecoder.Result.Ok>(StripDecoder.decode(px)).frame
+    fun decodesSquareThroughThorLikeDisplay() {
+        val payload = "TS1|Ünïcode|60|1234567|1453|0.5000|0.2500"
+        val frame = decodeOk(render(listOf(payload.toByteArray()), seq = 7)[0])
         assertTrue(frame.crcOk)
-        assertEquals(payload, frame.payload)
+        assertEquals(payload, String(frame.payload))
         assertEquals(7, frame.seq)
+        assertEquals(StripDecoder.VERSION, frame.version)
+        assertEquals(4.5, frame.cellPx, 0.05)
+        // The square sits at the right edge, 22 game pixels (33 screen pixels) down.
+        assertEquals(1920.0, frame.x + StripDecoder.COLS * frame.cellPx, 2.0)
+        assertEquals(33.0, frame.row - frame.cellPx / 2, 2.0)
     }
 
-    /** Unshifted colours: data cells above the sync can look like another sync and must not move it. */
     @Test
-    fun ignoresSyncLookalikesAboveTheStrip() {
-        val names = "TN1|" + (1..20).joinToString("\n") { "${6948 + it},${it % 5},Item é $it" }
-        val px = render(names, seq = 3, shiftColours = false)
-        val frame = assertIs<StripDecoder.Result.Ok>(StripDecoder.decode(px)).frame
+    fun decodesTheSmallestCellsAndDarkestShades() {
+        val payload = "TS1|Xandra|5|40912|1420|0.3187|0.6556"
+        val frame = decodeOk(render(listOf(payload.toByteArray()), seq = 1, cell = 2, shade = 12)[0])
         assertTrue(frame.crcOk)
-        assertEquals(names, frame.payload)
+        assertEquals(payload, String(frame.payload))
+    }
+
+    @Test
+    fun putsPartsBackTogether() {
+        val message = "TB1|3/98|" + (1..60).joinToString(",") { "${it * 1000}:$it:$it" }
+        val chunks = message.toByteArray().toList().chunked(87).map { it.toByteArray() }
+        val squares = render(chunks, seq = 200)
+        val assembler = PartAssembler()
+        // Seen in any order; the message comes out when the last missing part arrives.
+        val got = squares.indices.reversed().map { assembler.add(decodeOk(squares[it])) }
+        assertEquals(List(squares.size - 1) { null } + message, got)
+        assertNull(assembler.add(decodeOk(squares[0])), "a message is handed over once")
+    }
+
+    @Test
+    fun usesTheLastPositionAndFallsBackWhenItMoved() {
+        val px = render(listOf("TS1|x|1|0|0|0|0".toByteArray()), seq = 3)[0]
+        val row = decodeOk(px).row
+        assertEquals(row, assertIs<StripDecoder.Result.Ok>(StripDecoder.decode(px, near = row)).frame.row)
+        assertTrue(assertIs<StripDecoder.Result.Ok>(StripDecoder.decode(px, near = 300)).frame.crcOk)
+    }
+
+    @Test
+    fun decodesTheLineAlongTheTopEdge() {
+        val payload = "TB1|3/98|" + (1..7).joinToString(",") { "${it * 1000}:$it:$it" }
+        val frame = decodeOk(render(listOf(payload.toByteArray()), seq = 9, line = true)[0])
+        assertTrue(frame.crcOk)
+        assertEquals(payload, String(frame.payload))
+        assertTrue(frame.row < 5, "the line sits at the very top")
     }
 
     @Test
     fun reportsBadCrc() {
-        val px = render("TC1|x|1|0|0|0|0|0/0|", seq = 1, flipCell = StripDecoder.DATA + 2)
-        val frame = assertIs<StripDecoder.Result.Ok>(StripDecoder.decode(px)).frame
-        assertFalse(frame.crcOk)
+        val px = render(listOf("TS1|x|1|0|0|0|0".toByteArray()), seq = 1, flipCell = 40)[0]
+        assertFalse(decodeOk(px).crcOk)
     }
 
     @Test
-    fun failsWithoutStrip() {
+    fun failsWithoutSquare() {
         val px = ArrayPixels(400, 200, IntArray(400 * 200) { 0x203020 })
         assertIs<StripDecoder.Result.Failed>(StripDecoder.decode(px))
     }
 
+    private fun decodeOk(px: Pixels) = assertIs<StripDecoder.Result.Ok>(StripDecoder.decode(px)).frame
+
     /**
-     * Encodes [payload] the way Strip.lua does on a 1280x720 game frame, then shows it the
-     * way the Thor does: 1.5x upscale to 1920 wide, colours pushed through a shifting
-     * matrix, and the bottom rows cropped.
+     * Draws each part the way Strip.lua does on a 1280x720 game frame with a busy dark
+     * background, then shows it the way the Thor might: 1.5x bilinear upscale to
+     * 1920x1080 and colours pushed through a shifting matrix. Returns the top rows.
      */
-    private fun render(payload: String, seq: Int, flipCell: Int = -1, shiftColours: Boolean = true): Pixels {
-        val gw = 1280; val gh = 720; val cell = 6; val offset = 32
-        val perRow = gw / cell
-        val syms = IntArray(perRow * StripDecoder.ROWS)
-        val raw = HashMap<Int, Int>()
-        raw[0] = 0xFF00FF; raw[1] = 0x00FF00; raw[2] = 0xFF00FF; raw[3] = 0x00FF00
-        for (p in 0 until 64) syms[4 + p] = p
-        val bytes = payload.toByteArray(Charsets.UTF_8)
-        syms[68] = seq; syms[69] = StripDecoder.VERSION
-        syms[70] = bytes.size shr 6; syms[71] = bytes.size and 63
-        var i = StripDecoder.DATA; var acc = 0; var nbits = 0
-        for (b in bytes) {
-            acc = (acc shl 8) or (b.toInt() and 0xFF); nbits += 8
-            while (nbits >= 6) { nbits -= 6; syms[i++] = (acc shr nbits) and 63 }
-            acc = acc and ((1 shl nbits) - 1)
+    private fun render(
+        parts: List<ByteArray>, seq: Int, cell: Int = 3, shade: Int = 24, flipCell: Int = -1, line: Boolean = false,
+    ): List<Pixels> {
+        val gw = 1280; val gh = 720; val cols = StripDecoder.COLS; val right = 0
+        val perRow = if (line) cols * cols else cols
+        val top = if (line) 0 else 22
+        val rnd = Random(seq)
+        val background = IntArray(gw * gh) {
+            val v = rnd.nextInt(10, 70)
+            (v shl 16) or ((v + rnd.nextInt(0, 20)) shl 8) or (v / 2)
         }
-        if (nbits > 0) syms[i++] = (acc shl (6 - nbits)) and 63
-        val crc = StripDecoder.crc16(bytes)
-        syms[i] = crc shr 12; syms[i + 1] = (crc shr 6) and 63; syms[i + 2] = crc and 63
-        if (flipCell >= 0) syms[flipCell] = syms[flipCell] xor 1
+        return parts.mapIndexed { index, body ->
+            val head = byteArrayOf(StripDecoder.VERSION.toByte(), seq.toByte(), (index * 16 + parts.size - 1).toByte(), body.size.toByte())
+            val crc = StripDecoder.crc16(head + body)
+            val bytes = head + body + byteArrayOf((crc shr 8).toByte(), crc.toByte())
+            val levels = IntArray(cols * cols)
+            for (c in 0 until cols) levels[c] = if (c % 2 == 0) 3 else 0
+            var i = cols
+            for (c in 0 until 8) levels[i++] = c % 4
+            for (b in bytes) for (s in 3 downTo 0) levels[i++] = (b.toInt() shr (s * 2)) and 3
+            if (flipCell >= 0) levels[cols + flipCell] = levels[cols + flipCell] xor 1
 
-        fun level(v: Int) = v * 255 / 3
-        val game = IntArray(gw * gh) { 0x1A2A12 }
-        for (c in syms.indices) {
-            val colour = raw[c] ?: run {
-                val s = syms[c]
-                (level(s / 16 % 4) shl 16) or (level(s / 4 % 4) shl 8) or level(s % 4)
+            val game = background.copyOf()
+            val left = gw - right - perRow * cell
+            for (c in levels.indices) {
+                val v = levels[c] * shade
+                val colour = (v shl 16) or (v shl 8) or v
+                val x0 = left + (c % perRow) * cell
+                val y0 = top + (c / perRow) * cell
+                for (dy in 0 until cell) for (dx in 0 until cell) game[(y0 + dy) * gw + x0 + dx] = colour
             }
-            val x0 = (c % perRow) * cell
-            val yBottom = gh - 1 - offset - (c / perRow) * cell
-            for (dy in 0 until cell) for (dx in 0 until cell) game[(yBottom - dy) * gw + x0 + dx] = colour
+            val sw = 1920; val sh = 400
+            val screen = IntArray(sw * sh) { idx -> shift(bilinear(game, gw, gh, (idx % sw) / 1.5, (idx / sw) / 1.5)) }
+            ArrayPixels(sw, sh, screen)
         }
+    }
 
-        val sw = 1920; val sh = 1058
-        val screen = IntArray(sw * sh) { idx ->
-            val sx = idx % sw; val sy = idx / sw
-            game[(sy * gh / 1080) * gw + sx * gw / sw].let { if (shiftColours) shift(it) else it }
+    private fun bilinear(img: IntArray, w: Int, h: Int, fx: Double, fy: Double): Int {
+        val x = (fx - 0.25).coerceIn(0.0, w - 1.0); val y = (fy - 0.25).coerceIn(0.0, h - 1.0)
+        val x0 = x.toInt(); val y0 = y.toInt(); val x1 = minOf(x0 + 1, w - 1); val y1 = minOf(y0 + 1, h - 1)
+        val ax = x - x0; val ay = y - y0
+        var out = 0
+        for (sh in intArrayOf(16, 8, 0)) {
+            fun ch(px: Int, py: Int) = (img[py * w + px] shr sh) and 0xFF
+            val upper = ch(x0, y0) * (1 - ax) + ch(x1, y0) * ax
+            val lower = ch(x0, y1) * (1 - ax) + ch(x1, y1) * ax
+            out = out or ((upper * (1 - ay) + lower * ay).toInt() shl sh)
         }
-        return ArrayPixels(sw, sh, screen)
+        return out
     }
 
     /** Roughly what the Thor does to colours: pure green shows as about 117,251,76. */

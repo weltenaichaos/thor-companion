@@ -11,8 +11,20 @@ android {
         applicationId = "thor.companion"
         minSdk = 30
         targetSdk = 34
-        versionCode = 6
-        versionName = "0.4.1"
+        versionCode = 44
+        versionName = "0.18.6"
+    }
+
+    // One fixed debug key in the repo, so every CI build installs over the last one
+    // (each runner would otherwise make its own key, and Android refuses that update,
+    // which meant uninstalling and losing the saved item names, map pictures and paths).
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("companion-debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
@@ -22,6 +34,9 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    // The addon goes into the APK, so the app can put the matching version into the game (AddonInstaller).
+    sourceSets["main"].assets.srcDirs("../addon")
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

@@ -25,3 +25,12 @@ class ItemNamesTest {
         assertNull(ItemNames.parse("TC1|Xandra|5"))
     }
 }
+
+class ItemDetailsTest {
+    @Test
+    fun parsesDetails() {
+        val names = ItemNames.parse("TN2|2589\t1\t5\t0\t13\tTradeskill / Cloth\tLinen Cloth\n6948\t1\t1\t0\t0\tMiscellaneous\tHearthstone")!!
+        assertEquals(ItemName("Linen Cloth", 1, 5, 0, 13, "Tradeskill / Cloth"), names[2589])
+        assertEquals("Hearthstone", names[6948]?.name)
+    }
+}

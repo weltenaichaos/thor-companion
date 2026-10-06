@@ -20,17 +20,36 @@ object KeySender {
         "SHIFT" to KeyEvent.KEYCODE_SHIFT_LEFT,
         "ALT" to KeyEvent.KEYCODE_ALT_LEFT,
     ) + (1..12).associate { "F$it" to KeyEvent.KEYCODE_F1 + it - 1 } +
-        (0..9).associate { "NUMPAD$it" to KeyEvent.KEYCODE_NUMPAD_0 + it }
+        (0..9).associate { "NUMPAD$it" to KeyEvent.KEYCODE_NUMPAD_0 + it } +
+        mapOf("ENTER" to KeyEvent.KEYCODE_ENTER, "ESCAPE" to KeyEvent.KEYCODE_ESCAPE, "V" to KeyEvent.KEYCODE_V)
 
     private var socket: LocalSocket? = null
     private var reader: BufferedReader? = null
     private var writer: Writer? = null
 
     /** Sends [key] in WoW's notation (e.g. "CTRL-F9"); returns what went wrong, or null. */
-    @Synchronized
     fun send(context: Context, displayId: Int, key: String): String? {
         val codes = key.split('-').map { names[it] ?: return "unknown key $it" }
-        val line = "K $displayId ${codes.joinToString(" ")}\n"
+        return command(context, "K $displayId ${codes.joinToString(" ")}\n")
+    }
+
+    /** Types [text] into the display's focused window (the game's open chat box); returns what went wrong, or null. */
+    fun type(context: Context, displayId: Int, text: String): String? {
+        if (text.isEmpty()) return null
+        val hex = text.toByteArray(Charsets.UTF_8).joinToString("") { "%02x".format(it) }
+        return command(context, "T $displayId $hex\n")
+    }
+
+    /** Ends the key helper, if it runs (it would end by itself after 30 idle minutes). */
+    @Synchronized
+    fun quit() {
+        if (writer == null) return
+        runCatching { writer!!.apply { write("Q\n"); flush() }; reader!!.readLine() }
+        close()
+    }
+
+    @Synchronized
+    private fun command(context: Context, line: String): String? {
         // A helper left over from an earlier start can have gone away: one reconnect.
         repeat(2) {
             if (writer == null && !connect(context)) return "the key helper did not start"

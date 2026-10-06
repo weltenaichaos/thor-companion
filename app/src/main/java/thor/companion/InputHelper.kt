@@ -17,6 +17,8 @@ import android.view.KeyEvent
  * It listens on an abstract local socket and only accepts connections from the
  * app's own uid, so no other app can use it to inject keys. One line per command:
  *   K <display> <keycode> [<keycode>...]   one press: modifiers down, last key down/up, modifiers up
+ *   T <display> <text as UTF-8 hex>        types the text, as a keyboard would (for the chat box)
+ *   Q                                      ends the helper (the app's close button)
  * Each command answers "OK" or "ERR <reason>". It exits after 30 idle minutes.
  */
 object InputHelper {
@@ -55,6 +57,7 @@ object InputHelper {
                         val reply = try { handle(line) } catch (t: Throwable) { "ERR ${t.javaClass.simpleName}: ${t.message}" }
                         out.write(reply + "\n")
                         out.flush()
+                        if (line.trim() == "Q") System.exit(0)
                     }
                 }
             }.start()
@@ -63,6 +66,14 @@ object InputHelper {
 
     private fun handle(line: String): String {
         val parts = line.trim().split(' ')
+        if (parts.firstOrNull() == "Q") return "OK"
+        if (parts.firstOrNull() == "T" && parts.size == 3) {
+            val display = parts[1].toIntOrNull() ?: return "ERR bad display"
+            val text = String(parts[2].chunked(2).map { it.toInt(16).toByte() }.toByteArray(), Charsets.UTF_8)
+            val focus = focus(display)
+            type(display, text)
+            return if (focus == null) "OK" else "OK (focus: $focus)"
+        }
         if (parts.firstOrNull() != "K" || parts.size < 3) return "ERR bad command"
         val display = parts[1].toIntOrNull() ?: return "ERR bad display"
         val codes = parts.drop(2).map { it.toIntOrNull() ?: return "ERR bad key code" }
@@ -113,6 +124,34 @@ object InputHelper {
             Thread.sleep(15)
             meta = meta and metaFor(m).inv()
             send(display, down, KeyEvent.ACTION_UP, m, meta)
+        }
+    }
+
+    private val keyMap by lazy { KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD) }
+
+    /**
+     * Types [text] one character at a time with the key presses a keyboard would make
+     * (shift included). A character the keyboard has no key for goes as text on its own.
+     */
+    private fun type(display: Int, text: String) {
+        for (c in text) {
+            val events = keyMap.getEvents(charArrayOf(c))
+            if (events == null) {
+                val ev = KeyEvent(SystemClock.uptimeMillis(), c.toString(), KeyCharacterMap.VIRTUAL_KEYBOARD, 0)
+                setDisplayId.invoke(ev, display)
+                inject.invoke(inputManager, ev, 0)
+                Thread.sleep(12)
+                continue
+            }
+            for (e in events) {
+                val ev = KeyEvent(
+                    e.downTime, SystemClock.uptimeMillis(), e.action, e.keyCode, 0, e.metaState,
+                    KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD,
+                )
+                setDisplayId.invoke(ev, display)
+                inject.invoke(inputManager, ev, 0)
+                Thread.sleep(6)
+            }
         }
     }
 

@@ -40,6 +40,14 @@ object KeySender {
         return command(context, "T $displayId $hex\n")
     }
 
+    /** Ends the key helper, if it runs (it would end by itself after 30 idle minutes). */
+    @Synchronized
+    fun quit() {
+        if (writer == null) return
+        runCatching { writer!!.apply { write("Q\n"); flush() }; reader!!.readLine() }
+        close()
+    }
+
     @Synchronized
     private fun command(context: Context, line: String): String? {
         // A helper left over from an earlier start can have gone away: one reconnect.

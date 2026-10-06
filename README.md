@@ -117,6 +117,8 @@ when the game starts. In game:
   last field, the box's text length, confirms it arrived. If it doesn't, the app types
   the line key by key instead, and keeps doing so until it restarts. The addon never opens the chat box itself: the game blocks addons that
   do (the "blocked from an action only available to the Blizzard UI" popup).
+- The Exit button at the end of the status line closes the app (tap it twice): it saves
+  what it shows, ends its key helper and leaves the recent apps.
 - ALT-SHIFT-F12 makes the addon send everything again; the app's "Load from the game"
   button presses it (shown while the bags or character haven't arrived, for example right
   after installing the app). The app also keeps the last bags, character and map across

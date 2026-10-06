@@ -18,6 +18,7 @@ import android.view.KeyEvent
  * app's own uid, so no other app can use it to inject keys. One line per command:
  *   K <display> <keycode> [<keycode>...]   one press: modifiers down, last key down/up, modifiers up
  *   T <display> <text as UTF-8 hex>        types the text, as a keyboard would (for the chat box)
+ *   Q                                      ends the helper (the app's close button)
  * Each command answers "OK" or "ERR <reason>". It exits after 30 idle minutes.
  */
 object InputHelper {
@@ -56,6 +57,7 @@ object InputHelper {
                         val reply = try { handle(line) } catch (t: Throwable) { "ERR ${t.javaClass.simpleName}: ${t.message}" }
                         out.write(reply + "\n")
                         out.flush()
+                        if (line.trim() == "Q") System.exit(0)
                     }
                 }
             }.start()
@@ -64,6 +66,7 @@ object InputHelper {
 
     private fun handle(line: String): String {
         val parts = line.trim().split(' ')
+        if (parts.firstOrNull() == "Q") return "OK"
         if (parts.firstOrNull() == "T" && parts.size == 3) {
             val display = parts[1].toIntOrNull() ?: return "ERR bad display"
             val text = String(parts[2].chunked(2).map { it.toInt(16).toByte() }.toByteArray(), Charsets.UTF_8)

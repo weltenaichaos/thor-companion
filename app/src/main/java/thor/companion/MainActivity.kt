@@ -176,6 +176,11 @@ class MainActivity : Activity() {
         statusRow.addView(statusDot, LinearLayout.LayoutParams(dp(10), dp(10)))
         statusRow.addView(status, LinearLayout.LayoutParams(0, -2, 1f))
         statusRow.addView(loadButton)
+        // Closes the app for good (no task manager needed): a second tap within 3 s confirms.
+        statusRow.addView(chip("Exit") {
+            val now = SystemClock.uptimeMillis()
+            if (now - closeAskedAt < 3000) quit() else { closeAskedAt = now; say("Tap Exit again to close the Forever Companion") }
+        }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(6) })
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         toolbar = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         footer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -191,6 +196,17 @@ class MainActivity : Activity() {
         show(Panel.BAGS)
         updateCompass()
         say("Looking for the game…")
+    }
+
+    private var closeAskedAt = -10_000L
+
+    /** Exits: saves what it shows, stops reading the screen, ends the key helper and removes the app from the recent apps. */
+    private fun quit() {
+        say("Closing…")
+        keys.execute {
+            KeySender.quit()
+            runOnUiThread { finishAndRemoveTask() }
+        }
     }
 
     override fun onStart() {

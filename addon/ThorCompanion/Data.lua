@@ -314,6 +314,11 @@ local namesWait = true
 -- The chat waits only for what the start-up card waits for (the turns up to the spells).
 local function chatNow() return caughtUp or not namesWait or GetTime() > caughtUpBy end
 
+-- The kinds sent only when they change (the chat, names and quest pages go twice
+-- by themselves, the status comes every few seconds).
+local COPY_AGAIN = { [2] = true, [5] = true, [6] = true, [7] = true, [8] = true, [9] = true, [10] = true }
+local copyAgain = {}
+
 local function nextMessage()
     local id = C_Map.GetBestMapForUnit("player")
     if statusUrgent then
@@ -360,11 +365,24 @@ local function nextMessage()
         -- (each goes out twice, and the second time can look just like the first).
         if p and (p ~= lastSent[turn] or turn == 4 or turn == 11 or (turn == 1 and GetTime() - statusAt > STATUS_AGAIN)) then
             if turn == 1 then statusAt = GetTime() end
+            if COPY_AGAIN[turn] and ns.StripFast() then copyAgain[turn] = true end
             if turn == 5 then mapAt, mapID = GetTime(), p:match("^TM1|(%d+)") end
             lastSent[turn] = p
             if SUMMED[turn] then sums[turn] = checksum(p) end
             showingTurn = turn
             return encode(turn, p)
+        end
+    end
+    -- With the square going round once (/thor speed fast), what went out once goes out
+    -- a second time when nothing else is waiting, for an app that missed a part.
+    for t = 1, #kinds do
+        if copyAgain[t] then
+            copyAgain[t] = nil
+            if lastSent[t] then
+                showingTurn = t
+                known[t] = lastSent[t]
+                return lastSent[t]
+            end
         end
     end
     if not caughtUp then
@@ -513,6 +531,9 @@ SlashCmdList.THORCOMPANION = function(msg)
         setting("cell", cell, 2, 8, "the cell size")
     elseif shadeStep then
         setting("shade", shadeStep, 4, 80, "the shade step")
+    elseif msg == "speed fast" or msg == "speed safe" then
+        ThorCompanionDB.speed = msg:sub(7)
+        print("|cff66ccffForever Companion|r square: " .. (msg == "speed fast" and "fast (every part once)" or "safe (every part twice, slower)"))
     elseif msg == "tips on" or msg == "tips off" then
         ThorCompanionDB.tips = msg == "tips on"
         print("|cff66ccffForever Companion|r item tooltips for the app " .. (msg == "tips on" and "on" or "off"))

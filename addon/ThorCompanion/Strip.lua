@@ -24,9 +24,19 @@ local VERSION = 4
 local CALIB = 8
 local PART_BYTES = math.floor(((COLS - 1) * COLS - CALIB) / 4) - 4 - 2   -- 87
 local MAX_PARTS = 6
-local STEP_SECONDS = 0.35   -- per part; the app captures about five times a second
-local ROUNDS = 2
-local MIN_SECONDS = 1.5  -- every message stays at least this long; the app looks once a second when idle
+-- Two ways to go round (/thor speed fast|safe):
+--  safe: every part 0.35 s, all parts twice; every message stays at least 1.5 s.
+--  fast: every part 0.45 s, once. While messages follow each other (one went up in
+--   the last BUSY_SECONDS) the app reads five times a second, so a single part stays
+--   only 0.6 s; after a quiet spell the app looks once a second, so the first part of
+--   the next message stays 1.1 s. A message the app still missed comes again when
+--   the square is quiet (see Data.lua).
+local SAFE = { step = 0.35, rounds = 2, min = 1.5 }
+local FAST = { step = 0.45, rounds = 1, min = 0.6, first = 1.1 }
+local BUSY_SECONDS = 2.5
+local function speed() return (ThorCompanionDB and ThorCompanionDB.speed == "safe") and SAFE or FAST end
+function ns.StripFast() return speed() == FAST end
+local nextStepAt, lastDrawAt = 0, -100
 
 local frame, cells
 local msgSeq = 0
@@ -124,7 +134,9 @@ local function build()
 end
 
 local function step()
-    if #parts < 2 or rounds <= 0 then return end
+    if #parts < 2 or rounds <= 0 or GetTime() < nextStepAt then return end
+    nextStepAt = GetTime() + speed().step - 0.02
+    lastDrawAt = GetTime()
     part = part + 1
     if part > #parts then
         part = 1
@@ -161,7 +173,7 @@ function ns.StripPartBytes()
     return PART_BYTES
 end
 
--- True while a message has not been up for MIN_SECONDS, or its parts are still
+-- True while a message has not been up for its minimum time, or its parts are still
 -- going round; the caller waits with the next one, so the app sees every part.
 -- (Only waiting for the first round was too short: the app often first notices
 -- a message halfway through it, and the facing in the status changes all the time.)
@@ -169,8 +181,9 @@ end
 local STATUS_SECONDS = 0.5
 
 local holdFor
+local minHold = SAFE.min
 function ns.StripBusy()
-    local hold = holdFor or (message and message:sub(1, 4) == "TS1|" and STATUS_SECONDS or MIN_SECONDS)
+    local hold = holdFor or (message and message:sub(1, 4) == "TS1|" and STATUS_SECONDS or minHold)
     return GetTime() - shownAt < hold or (#parts > 1 and rounds > 0)
 end
 
@@ -187,10 +200,16 @@ function ns.StripWrite(payload, hold)
     for p = 1, math.max(1, math.ceil(#payload / PART_BYTES)) do
         parts[p] = payload:sub((p - 1) * PART_BYTES + 1, p * PART_BYTES)
     end
-    part, rounds = 1, ROUNDS
-    shownAt, holdFor = GetTime(), hold
+    local sp = speed()
+    local now = GetTime()
+    local quiet = now - lastDrawAt > BUSY_SECONDS
+    part, rounds = 1, sp.rounds
+    shownAt, holdFor = now, hold
+    minHold = (sp == FAST and quiet) and sp.first or sp.min
+    nextStepAt = now + ((sp == FAST and quiet) and sp.first or sp.step) - 0.02
+    lastDrawAt = now
     draw(1)
-    if #parts > 1 and not stepper then stepper = C_Timer.NewTicker(STEP_SECONDS, step) end
+    if #parts > 1 and not stepper then stepper = C_Timer.NewTicker(0.05, step) end
 end
 
 -- Applies changed /thor cell, shade or position settings.

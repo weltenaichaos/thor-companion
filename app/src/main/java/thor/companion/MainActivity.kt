@@ -404,6 +404,8 @@ class MainActivity : Activity() {
         var seenSquare = false
         var absent = 0
         var messageAt = 0L
+        var changedAt = 0L
+        var lastShown = -1
         var near = -1
         val assembler = PartAssembler()
         while (worker === Thread.currentThread()) {
@@ -426,6 +428,9 @@ class MainActivity : Activity() {
                 misses = 0
                 frameAt = SystemClock.uptimeMillis()
                 near = frame.row
+                // Something new on the square (a part or a message): more is likely to follow.
+                val shown = frame.seq * 16 + frame.part
+                if (shown != lastShown) { lastShown = shown; changedAt = SystemClock.uptimeMillis() }
                 val message = assembler.add(frame)
                 if (message != null) {
                     if (seenAt == 0L) seenAt = SystemClock.uptimeMillis()
@@ -463,7 +468,10 @@ class MainActivity : Activity() {
             // about a third of a second, so read fast while one is coming in, and
             // right after a tap, when the bags are about to change. Slower still
             // while the game isn't showing the square at all.
-            val fast = assembler.waiting || SystemClock.uptimeMillis() - lastKeyAt < 3000
+            // The addon shows each part once (its fast speed) as long as the square keeps
+            // changing, so keep reading fast for a moment after anything new.
+            val fast = assembler.waiting || SystemClock.uptimeMillis() - lastKeyAt < 3000 ||
+                SystemClock.uptimeMillis() - changedAt < BUSY_MS
             // While you walk the position changes all the time: look more often, so the
             // arrow on the map keeps up, and slow down again once you stand still.
             val walking = SystemClock.uptimeMillis() - movedAt < 3000
@@ -2207,6 +2215,8 @@ class MainActivity : Activity() {
 
     private companion object {
         /** Message kinds kept across restarts. */
+        /** After the square last changed, how long the app keeps reading five times a second (the addon assumes 2.5 s). */
+        const val BUSY_MS = 3000L
         /** How long a message in the status line stays before "Connected" replaces it. */
         const val NOTICE_MS = 6000L
         /** After this long on the start-up card, it offers to ask the game for everything, or to open anyway. */

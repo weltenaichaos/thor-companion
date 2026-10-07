@@ -269,6 +269,8 @@ class MainActivity : Activity() {
     override fun onStop() {
         closeCompose()
         worker = null
+        watcher = null
+        runCatching { watchSocket?.close() }
         saveTrail()
         saveLast()
         super.onStop()
@@ -395,8 +397,8 @@ class MainActivity : Activity() {
         if (!addonChecked) {
             addonChecked = true
             installAddon()
-            EventProbe.start(this)
         }
+        if (watcher == null) watcher = Thread(::watchGame, "game-watch").apply { isDaemon = true; start() }
         var misses = 0
         var seenSquare = false
         var absent = 0
@@ -405,6 +407,13 @@ class MainActivity : Activity() {
         val assembler = PartAssembler()
         while (worker === Thread.currentThread()) {
             val t0 = SystemClock.uptimeMillis()
+            // The game's files say there is nothing to see (closed, starting, the character
+            // screen, a loading screen): no screenshot at all, just wait for the next event.
+            if (blind()) {
+                absent = 0
+                SystemClock.sleep(500)
+                continue
+            }
             val px = screen.capture()
             val result = if (px == null) null else StripDecoder.decode(px, near)
             val frame = (result as? StripDecoder.Result.Ok)?.frame?.takeIf { it.crcOk }
@@ -418,9 +427,11 @@ class MainActivity : Activity() {
                 near = frame.row
                 val message = assembler.add(frame)
                 if (message != null) {
-                    if (seenAt == 0L) { seenAt = SystemClock.uptimeMillis(); EventProbe.note("first message ${message.take(4)}") }
+                    if (seenAt == 0L) seenAt = SystemClock.uptimeMillis()
                     messageAt = SystemClock.uptimeMillis()
-                    if (away) { away = false; EventProbe.note("square back: ${message.take(4)}"); runOnUiThread { render() } }
+                    messageAtUi = messageAt
+                    if (game != Game.UNKNOWN && game != Game.IN_WORLD) game = Game.IN_WORLD
+                    if (away) { away = false; runOnUiThread { render() } }
                     if (message.startsWith("TS1|") || !awaitStatus) {
                         handle(message, assembler.lastSeq)
                         // Who is playing is known now: what came before the status is theirs.
@@ -474,12 +485,12 @@ class MainActivity : Activity() {
             val stale = messageAt != 0L && SystemClock.uptimeMillis() - messageAt > STALE_MS
             if ((absent == 3 && seenSquare || stale) && !away) {
                 away = true
-                EventProbe.note(if (stale) "square says nothing new" else "square gone")
                 awaitStatus = true
                 fresh.clear()
                 runOnUiThread { startLoading() }
             }
             val period = when {
+                game == Game.LOADING && result !is StripDecoder.Result.Ok -> 2000L
                 absent > 0 && !seenSquare -> 10_000L
                 absent in 1..4 -> 1000L
                 absent == 5 -> 10_000L
@@ -496,6 +507,102 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * What the game is doing, as its files tell it (see [GameFiles], run by the root
+     * helper): no timer, the kernel says when a file is opened or written. UNKNOWN when
+     * that can't be followed (no game folder, the helper not running, or the game was
+     * already running when the app started): then the screen alone tells, as before.
+     */
+    enum class Game { UNKNOWN, CLOSED, STARTING, LOADING, IN_WORLD, OUT }
+    @Volatile private var game = Game.UNKNOWN
+    /** The character entering the world or last in it ("Sanbica-Norton"). */
+    @Volatile private var gameCharacter: String? = null
+    /** When the game last changed its state (L), and when the addons loaded (A; 0 before). */
+    @Volatile private var gameAt = 0L
+    @Volatile private var addonsAt = 0L
+    @Volatile private var watcher: Thread? = null
+    @Volatile private var watchSocket: android.net.LocalSocket? = null
+    /** When the last message came from the square (uptime ms), for the card. */
+    @Volatile private var messageAtUi = 0L
+
+    /** True when a message came from the square after [since] (uptime ms). */
+    private fun seenSince(since: Long) = messageAtUi > since
+
+    /** True while the game's files say there is nothing on the top screen to read. */
+    private fun blind(): Boolean {
+        val now = SystemClock.uptimeMillis()
+        return when (game) {
+            Game.CLOSED, Game.STARTING -> true
+            // Loading into the world: no screenshot until the addons have loaded (the crash
+            // came from screenshots while the game set up the world); if that is never
+            // seen, look now and then after a minute.
+            Game.LOADING -> if (addonsAt != 0L) now - addonsAt < 3000 else now - gameAt < 60_000
+            else -> false
+        }
+    }
+
+    /** Follows the game through the root helper's file events, for as long as the app is shown. */
+    private fun watchGame() {
+        while (watcher === Thread.currentThread()) {
+            val socket = KeySender.open(this)
+            if (socket == null) { game = Game.UNKNOWN; SystemClock.sleep(30_000); continue }
+            watchSocket = socket
+            try {
+                val folder = getPreferences(MODE_PRIVATE).getString("gameFolder", null).orEmpty()
+                socket.outputStream.write("W $folder\n".toByteArray())
+                socket.outputStream.flush()
+                socket.inputStream.bufferedReader().forEachLine { line ->
+                    if (watcher === Thread.currentThread()) onGameEvent(line)
+                }
+            } catch (e: java.io.IOException) {
+                // The helper went away (or the app stops): start again below.
+            }
+            runCatching { socket.close() }
+            game = Game.UNKNOWN
+            if (watcher === Thread.currentThread()) SystemClock.sleep(5000)
+        }
+    }
+
+    private fun onGameEvent(line: String) {
+        val what = line.take(1)
+        val arg = line.drop(2).trim()
+        val now = SystemClock.uptimeMillis()
+        val was = game
+        when (what) {
+            "F" -> {
+                if (arg == "-") { game = Game.UNKNOWN; return }
+                getPreferences(MODE_PRIVATE).edit().putString("gameFolder", arg).apply()
+                game = Game.CLOSED
+            }
+            "R" -> game = Game.UNKNOWN
+            "S" -> game = Game.STARTING
+            "L" -> {
+                game = Game.LOADING; gameCharacter = arg; addonsAt = 0L
+                // The character is known before the game shows anything: their data, not the last one's.
+                val name = arg.substringBefore('-')
+                if (name.isNotEmpty() && name != keptFor) switchCharacter(name)
+            }
+            "A" -> {
+                // Also after a /reload, which writes the saved settings (O) and loads them again.
+                if (game == Game.LOADING || game == Game.OUT || game == Game.STARTING) {
+                    game = Game.LOADING; gameCharacter = arg; addonsAt = now
+                }
+            }
+            "O" -> if (game == Game.IN_WORLD || game == Game.LOADING || game == Game.UNKNOWN) game = Game.OUT
+            "X" -> game = Game.CLOSED
+            else -> return
+        }
+        gameAt = now
+        if (game == was && what != "L" && what != "A") return
+        // Out of the world: the card stands in for the tabs until the next character is in.
+        if (game != Game.UNKNOWN && game != Game.IN_WORLD && (was == Game.IN_WORLD || was == Game.UNKNOWN || what == "L")) {
+            away = true
+            awaitStatus = true
+            fresh.clear()
+            runOnUiThread { startLoading() }
+        } else runOnUiThread { if (!ready) render() }
+    }
+
     /** Messages that came while the app waits for the status (see [awaitStatus]), oldest first. */
     private val held = ArrayDeque<String>()
 
@@ -507,7 +614,7 @@ class MainActivity : Activity() {
         if (message.startsWith("TS1|")) {
             movedAt = SystemClock.uptimeMillis()
             val name = message.split('|').getOrNull(1)
-            if (name != null && name != "error" && name != "?" && name != keptFor) { EventProbe.note("character $name"); switchCharacter(name) }
+            if (name != null && name != "error" && name != "?" && name != keptFor) switchCharacter(name)
         }
         remember(message)
         keptKey(message)?.let { fresh += it }
@@ -840,7 +947,13 @@ class MainActivity : Activity() {
         val box = card().apply { background = Theme.box(context, SURFACE, 14, ACCENT); setPadding(dp(18), dp(16), dp(18), dp(16)) }
         val seen = seenAt != 0L
         val who = s?.name?.takeIf { known && it != "?" }
+        val g = game
+        val entering = gameCharacter?.substringBefore('-')
         box.addView(line(when {
+            g == Game.CLOSED -> "WoW is closed"
+            g == Game.STARTING -> "WoW is starting"
+            g == Game.LOADING && entering != null -> "Getting $entering ready"
+            g == Game.OUT && entering != null -> "$entering logged out"
             away -> "Waiting for a character"
             who != null -> "Getting $who ready"
             seen -> "Checking who is playing…"
@@ -848,6 +961,11 @@ class MainActivity : Activity() {
         }, TEXT, 18f, bold = true).apply { setPadding(0, 0, 0, 0) })
         val c = character
         val sub = when {
+            g == Game.CLOSED -> "Start WoW Forever; the app follows it from there. It leaves the top screen alone until you are in the world."
+            g == Game.STARTING -> "Log in and choose a character."
+            g == Game.LOADING && addonsAt == 0L -> "Loading into the world…" + (switchedFrom?.let { " $it's data is put away." } ?: "")
+            g == Game.LOADING && !seenSince(addonsAt) -> "Almost there: the addons are loading."
+            g == Game.OUT -> "Choose a character, or quit the game. Their data is put away."
             away -> "No data from the game: logged out, on the character screen, a loading screen, or the game is closed. " +
                 (keptFor?.let { "$it's data is put away until the game says who is playing." } ?: "")
             !seen -> "Open WoW Forever with the Forever Companion addon on."
@@ -858,7 +976,7 @@ class MainActivity : Activity() {
             }
         }
         if (sub.isNotEmpty()) box.addView(line(sub, DIM, 13f).apply { setPadding(0, dp(4), 0, dp(10)) })
-        val rows = parts ?: if (seen && !away) PLACEHOLDER.map { Readiness.Part(it, Readiness.Status.MISSING, "waiting") } else emptyList()
+        val rows = parts ?: if (seen && !away || g == Game.LOADING) PLACEHOLDER.map { Readiness.Part(it, Readiness.Status.MISSING, "waiting") } else emptyList()
         for (part in rows) {
             val r = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
@@ -885,9 +1003,11 @@ class MainActivity : Activity() {
             box.addView(Bar(this).apply { value = done.toFloat() / parts.size; colour = ACCENT }, LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(12) })
         }
         val waited = SystemClock.uptimeMillis() - (if (live) loadingSince else seenAt)
-        val slow = seen && !away && waited > SLOW_MS
+        val slow = seen && !away && g != Game.LOADING && waited > SLOW_MS
         box.addView(line(
-            if (away) "The app looks again every few seconds and carries on as soon as the game is back."
+            if (g == Game.CLOSED || g == Game.STARTING || g == Game.OUT) "The game's own files tell the app when you enter the world; it doesn't look at the screen before that."
+            else if (g == Game.LOADING) "The tabs open as soon as everything is in."
+            else if (away) "The app looks again every few seconds and carries on as soon as the game is back."
             else if (slow) "The game sends what changed by itself. For the rest, one tap asks it for everything."
             else if (seen) "The tabs open as soon as everything is in. Nothing can be tapped before that, so no tap goes to an old bag slot."
             else "Already open? Then the data square may be hidden (/thor), or the app reads the other screen (hold the dot).",

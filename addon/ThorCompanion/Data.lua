@@ -295,7 +295,7 @@ local chatUrgent = false
 local statusUrgent = true
 -- Until everything has gone out once after a login (or a Load from the game), the
 -- zone pictures and item icons wait: they hold the square for seconds each.
-local caughtUp, caughtUpBy = false, 0
+local caughtUp, caughtUpBy, picturesAfter = false, 0, 0
 local CATCH_UP_SECONDS = 60
 local statusHold
 -- For a while after a loading screen the status goes out every few seconds: an
@@ -307,6 +307,10 @@ bagEvents:RegisterEvent("BAG_UPDATE_DELAYED")
 bagEvents:SetScript("OnEvent", function() bagsUrgent = true end)
 
 local showingTurn
+-- The chat waits until everything else has gone out once after a login: in a
+-- city the channels alone could keep the square busy while the app gets ready.
+local function chatNow() return caughtUp or GetTime() > caughtUpBy end
+
 local function nextMessage()
     local id = C_Map.GetBestMapForUnit("player")
     if statusUrgent then
@@ -322,7 +326,7 @@ local function nextMessage()
             statusAt, lastSent[1], showingTurn = GetTime(), p, 1
             return encode(1, p)
         end
-    elseif chatUrgent then
+    elseif chatUrgent and chatNow() then
         turn = 3  -- the chat (4) is next
         chatUrgent = false
     elseif bagsUrgent then
@@ -335,7 +339,8 @@ local function nextMessage()
     mapUrgent = false
     for _ = 1, #kinds do
         turn = turn % #kinds + 1
-        local ok, p = pcall(kinds[turn])
+        local ok, p = true, nil
+        if turn ~= 4 or chatNow() then ok, p = pcall(kinds[turn]) end
         if not ok then p = "TS1|error|" .. tostring(p) end
         -- Every change redraws the square, so a moving position is sent only now and then.
         if turn == 1 and p and lastSent[1] and withoutPosition(p) == withoutPosition(lastSent[1])
@@ -353,7 +358,10 @@ local function nextMessage()
             return encode(turn, p)
         end
     end
-    caughtUp = true
+    if not caughtUp then
+        -- Everything is out: the chat goes next, then the pictures may come.
+        caughtUp, chatUrgent, picturesAfter = true, true, GetTime() + 1
+    end
     -- Nothing changed: time for the item tooltips the app hasn't got yet.
     local ok, tips = pcall(ns.TooltipsPayload)
     if ok and tips then
@@ -457,7 +465,7 @@ f:SetScript("OnEvent", function()
         end
         if ns.StripBusy() then return end
         -- What the app has no picture of yet comes up by itself, one at a time.
-        if caughtUp or GetTime() > caughtUpBy then
+        if caughtUp and GetTime() > picturesAfter or GetTime() > caughtUpBy + 5 then
             local okAuto, shown = pcall(ns.MapPictureAuto)
             if okAuto and shown then return end
             okAuto, shown = pcall(ns.IconsAuto)

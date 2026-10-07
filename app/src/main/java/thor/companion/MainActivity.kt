@@ -544,6 +544,7 @@ class MainActivity : Activity() {
             val socket = KeySender.open(this)
             if (socket == null) { game = Game.UNKNOWN; SystemClock.sleep(30_000); continue }
             watchSocket = socket
+            watchCount++
             try {
                 val folder = getPreferences(MODE_PRIVATE).getString("gameFolder", null).orEmpty()
                 socket.outputStream.write("W $folder\n".toByteArray())
@@ -561,13 +562,26 @@ class MainActivity : Activity() {
     }
 
     /** A line of the game's chat log file: the chat comes from there, not the square (see [ChatFile]). */
-    private fun onChatFile(raw: String) {
+    private fun onChatFile(raw: String, history: Boolean = false) {
         val line = ChatFile.parse(raw) ?: return
+        if (!history) chatFromFile++
         runOnUiThread {
             chat.add(line)
-            if (panel == Panel.CHAT) render() else updateBadges()
+            // A busy city chat brings many lines a second: the screen is redrawn once for all of them.
+            if (!chatRedraw) {
+                chatRedraw = true
+                window.decorView.postDelayed({
+                    chatRedraw = false
+                    if (panel == Panel.CHAT) render() else updateBadges()
+                }, 400)
+            }
         }
     }
+    private var chatRedraw = false
+    /** Chat lines that came from the log as they were said, since the app started. */
+    @Volatile private var chatFromFile = 0
+    /** How many times the helper was asked to follow the game since the app started. */
+    @Volatile private var watchCount = 0
 
     private fun onGameEvent(line: String) {
         val what = line.take(1)
@@ -599,6 +613,8 @@ class MainActivity : Activity() {
             "O" -> if (game == Game.IN_WORLD || game == Game.LOADING || game == Game.UNKNOWN) game = Game.OUT
             "X" -> game = Game.CLOSED
             "C" -> { onChatFile(arg); return }
+            // The chat from just before (the app started late): only into a chat still empty.
+            "H" -> { if (chatFromFile == 0 && watchCount == 1) onChatFile(arg, history = true); return }
             else -> return
         }
         gameAt = now

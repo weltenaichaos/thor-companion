@@ -137,6 +137,13 @@ object ChatFile {
             if (sender.contains("|K")) return ChatLine("bnwhisper_to", "", text)
             return ChatLine("whisper_to", sender, text)
         }
+        if (NOISE.any { it.containsMatchIn(line) }) return null
         return ChatLine("system", "", line)
     }
+
+    /** Other players' crafting and loot: in a city it buries the chat. Your own stays ("You create ..."). */
+    private val NOISE = listOf(
+        Regex("""^(?!You )\S.*? creates .+\.$"""),
+        Regex("""^(?!You )\S.*? receives? (?:loot|item|bonus loot): """),
+    )
 }

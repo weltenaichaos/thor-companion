@@ -23,6 +23,7 @@ import java.io.Writer
  *   O <Name-Realm>    the character's saved settings were written (logout, quit or /reload)
  *   X                 the game is closed
  *   C <line>          a new line in the game's chat log (Logs/WoWChatLog.txt, which the addon switches on)
+ *   H <line>          one of its last lines from before the watching began (when written in the last minutes)
  * Only watches; changes nothing.
  */
 class GameFiles(private val out: Writer, hint: String?) {
@@ -44,6 +45,7 @@ class GameFiles(private val out: Writer, hint: String?) {
         if (folder != null) {
             watch()
             if (process() != null) { running = true; processSeen = true; say("R") }
+            seedChat(File(folder, "Logs/$CHAT_LOG"))
             Thread { checkProcess() }.apply { isDaemon = true }.start()
         }
     }
@@ -135,8 +137,17 @@ class GameFiles(private val out: Writer, hint: String?) {
         }
     }
 
+    /** The last lines of a chat log written in the last minutes, so the app's chat doesn't start empty. */
+    private fun seedChat(file: File) = synchronized(this) {
+        if (System.currentTimeMillis() - file.lastModified() > 10 * 60_000) return
+        chatOffset = (file.length() - SEED_BYTES).coerceAtLeast(0)
+        // Starting mid-line: that line is left out.
+        if (chatOffset > 0) chatPartial = "\u0000"
+        tailChat(file, "H")
+    }
+
     /** The lines added to the chat log since last time. */
-    private fun tailChat(file: File) {
+    private fun tailChat(file: File, kind: String = "C") {
         val length = file.length()
         if (length < chatOffset) chatOffset = 0  // started over
         if (length == chatOffset) return
@@ -151,8 +162,9 @@ class GameFiles(private val out: Writer, hint: String?) {
         val lines = text.split('\n')
         chatPartial = lines.last()
         for (l in lines.dropLast(1)) {
+            if (l.startsWith('\u0000')) continue
             val line = l.trimEnd('\r')
-            if (line.isNotBlank()) say("C $line")
+            if (line.isNotBlank()) say("$kind $line")
         }
     }
 
@@ -191,6 +203,7 @@ class GameFiles(private val out: Writer, hint: String?) {
 
     companion object {
         const val CHAT_LOG = "WoWChatLog.txt"
+        private const val SEED_BYTES = 12 * 1024L
         private val EXE = Regex("""(?i)wow[^/\\]*\.exe$""")
 
         /** The game's process: its folder, from its command line ("wine /data/.../WowB-ARM64.exe ..."). */

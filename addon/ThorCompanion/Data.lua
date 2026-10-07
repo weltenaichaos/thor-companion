@@ -311,6 +311,11 @@ local showingTurn
 -- city the channels alone could keep the square busy while the app gets ready.
 local function chatNow() return caughtUp or GetTime() > caughtUpBy end
 
+-- After a loading screen the item names (several long pages for full bags) wait
+-- until every other kind has had its turn once: the app's start-up card waits for
+-- the map, quests and spells, not for the names.
+local namesWait = true
+
 local function nextMessage()
     local id = C_Map.GetBestMapForUnit("player")
     if statusUrgent then
@@ -319,6 +324,7 @@ local function nextMessage()
         statusUrgent = false
         statusHold = 1.5  -- long enough for an app that looks once a second
         bagsUrgent = true -- and the bags right after it
+        namesWait = true
     elseif GetTime() - loadedAt < 30 and GetTime() - statusAt > 8 then
         -- The status again soon after loading (see loadedAt), in between: the turns go on where they were.
         local ok, p = pcall(kinds[1])
@@ -335,12 +341,15 @@ local function nextMessage()
     elseif mapUrgent or (id and tostring(id) ~= mapID) then
         turn = 4  -- the map (5) is next
         mapForce = mapUrgent
+    elseif lastSent[8] and ns.QuestPagesPending() then
+        turn = 10  -- the rest of the quest log (11) right after its first page
     end
     mapUrgent = false
     for _ = 1, #kinds do
         turn = turn % #kinds + 1
         local ok, p = true, nil
-        if turn ~= 4 or chatNow() then ok, p = pcall(kinds[turn]) end
+        if turn == 10 then namesWait = false end  -- the spells: the last the card waits for
+        if (turn ~= 4 or chatNow()) and (turn ~= 3 or not namesWait) then ok, p = pcall(kinds[turn]) end
         if not ok then p = "TS1|error|" .. tostring(p) end
         -- Every change redraws the square, so a moving position is sent only now and then.
         if turn == 1 and p and lastSent[1] and withoutPosition(p) == withoutPosition(lastSent[1])

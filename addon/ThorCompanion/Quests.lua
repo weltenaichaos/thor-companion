@@ -166,13 +166,17 @@ local function build()
     return string.format("TL1|%d|%d|%d|%d", ThorCompanionKill or 0, readyCount, readyXP, #pages), pages
 end
 
+-- The pages after the first the app hasn't had twice since they changed, and whether
+-- one of them hasn't gone out once.
+local sentPage, sentCount = {}, {}
+local pending = true
+
 function ns.QuestsPayload()
     local head, pages = build()
+    if #pages <= 1 then pending = false end
     return head .. (#pages[1] > 0 and ("\n" .. table.concat(pages[1], "\n")) or "")
 end
 
--- The next page after the first that the app hasn't had twice since it changed, or nil.
-local sentPage, sentCount = {}, {}
 local pagesSum = 0
 
 -- The checksum (as TS1's) over the pages after the first, one after another, as last
@@ -192,15 +196,29 @@ function ns.QuestPagesPayload()
     for n = 2, #pages do
         local p = all[n - 1]
         if p ~= sentPage[n] then sentPage[n], sentCount[n] = p, 0 end
-        if sentCount[n] < 2 then
-            sentCount[n] = sentCount[n] + 1
-            return p
+    end
+    -- Every page once before any goes the second time.
+    local pick
+    for times = 0, 1 do
+        for n = 2, #pages do
+            if not pick and sentCount[n] == times then pick = n end
         end
     end
-    return nil
+    if pick then sentCount[pick] = sentCount[pick] + 1 end
+    pending = false
+    for n = 2, #pages do
+        if sentCount[n] == 0 then pending = true end
+    end
+    return pick and all[pick - 1] or nil
+end
+
+-- True while a page (new or changed) has not gone out once: the pages then go before
+-- the rest of the turns, or a long quest log took a minute behind the item names.
+function ns.QuestPagesPending()
+    return pending
 end
 
 -- Every page again (a refresh, or an app that just started).
 function ns.QuestPagesAgain()
-    sentPage, sentCount = {}, {}
+    sentPage, sentCount, pending = {}, {}, true
 end

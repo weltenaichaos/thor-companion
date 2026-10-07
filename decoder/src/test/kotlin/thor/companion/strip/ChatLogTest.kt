@@ -94,7 +94,12 @@ class ChatLogTest {
     @Test
     fun linesFromTheChatLogFile() {
         assertEquals(ChatLine("channel", "Azlyn Lee", "Olympus?", "Trade"), ChatFile.parse("10/7 19:51:34.843  [2. Trade] Azlyn Lee: Olympus?"))
-        assertEquals(ChatLine("system", "", "Zaria Stormstrike creates Light Armor Kit."), ChatFile.parse("10/7 19:51:35.202  Zaria Stormstrike creates Light Armor Kit."))
+        // Other players' crafting and loot are left out; yours and the game's announcements stay.
+        assertEquals(null, ChatFile.parse("10/7 19:51:35.202  Zaria Stormstrike creates Light Armor Kit."))
+        assertEquals(null, ChatFile.parse("10/7 19:51:35.202  Bo receives loot: [Linen Cloth]x2."))
+        assertEquals(ChatLine("system", "", "You create Medium Leather."), ChatFile.parse("10/7 19:51:35.202  You create Medium Leather."))
+        assertEquals(ChatLine("system", "", "You receive loot: [Linen Cloth]."), ChatFile.parse("10/7 19:51:35.202  You receive loot: [Linen Cloth]."))
+        assertEquals(ChatLine("system", "", "Bo has come online."), ChatFile.parse("10/7 19:51:35.202  Bo has come online."))
         assertEquals(ChatLine("party", "Pagrin", "on my way: 2 min"), ChatFile.parse("10/7 19:51:36.000  [Party Leader] Pagrin: on my way: 2 min"))
         assertEquals(ChatLine("whisper", "Moria-Deathknell", "hi"), ChatFile.parse("10/7 19:51:37.000  Moria-Deathknell whispers: hi"))
         assertEquals(ChatLine("whisper_to", "Moria-Deathknell", "hey"), ChatFile.parse("10/7 19:51:38.000  To Moria-Deathknell: hey"))

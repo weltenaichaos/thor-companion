@@ -11,8 +11,8 @@ android {
         applicationId = "thor.companion"
         minSdk = 30
         targetSdk = 34
-        versionCode = 65
-        versionName = "0.21.6"
+        versionCode = 66
+        versionName = "0.21.7"
     }
 
     // One fixed debug key in the repo, so every CI build installs over the last one

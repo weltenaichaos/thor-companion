@@ -652,6 +652,9 @@ class MainActivity : Activity() {
         }
     }
 
+    /** The addon version the game runs, while it isn't the one this app brought (else null). */
+    @Volatile private var gameAddon: String? = null
+
     private fun onMessage(message: String) {
         if (message.startsWith("TB1|") && !bagsFresh) {
             bagsFresh = true
@@ -661,6 +664,8 @@ class MainActivity : Activity() {
         if (parsed != null && message.startsWith("TS1|")) {
             // The game still running an older addon than the one this app brought: say so, once.
             val bundled = AddonInstaller.version(this)
+            // Until it is the new one, "Connected" says so too: the old addon may lack what this app expects.
+            gameAddon = if (bundled != null && parsed.addonVersion != bundled) parsed.addonVersion ?: "?" else null
             if (!addonWarned && bundled != null && parsed.addonVersion != bundled) {
                 addonWarned = true
                 say("The game is running an older Forever Companion addon (${parsed.addonVersion ?: "an old version"}); " +
@@ -1044,7 +1049,7 @@ class MainActivity : Activity() {
 
     /** Data came in: the dot goes green, and the line says so unless it is still showing something you should read. */
     private fun connected() {
-        if (SystemClock.uptimeMillis() - saidAt > NOTICE_MS) say("Connected", notice = false) else say(status.text.toString(), notice = false)
+        if (SystemClock.uptimeMillis() - saidAt > NOTICE_MS) say(gameAddon?.let { "Connected · old addon $it in the game: close and start the game again" } ?: "Connected", notice = false) else say(status.text.toString(), notice = false)
     }
 
     /** The status line, with its dot: green while the game's data comes in, red when it stopped, amber before it ever came. */

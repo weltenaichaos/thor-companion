@@ -123,6 +123,12 @@ when the game starts. In game:
   do (the "blocked from an action only available to the Blizzard UI" popup).
 - The Exit button at the end of the status line closes the app (tap it twice): it saves
   what it shows, ends its key helper and leaves the recent apps.
+- At start, after a /reload and when you log in another character, a start-up card stands
+  in for the tabs until everything they show is there: character and gear, bags, item
+  names, map, quests and spells. TS1's last field has the addon's checksum of the last
+  map, character, gear, quests, spells and quest pages it sent, so data the app kept
+  from before counts at once when it still matches. The app keeps that data per
+  character. After 15 s the card offers "Load from the game" and "Open anyway".
 - ALT-SHIFT-F12 makes the addon send everything again; the app's "Load from the game"
   button presses it (shown while the bags or character haven't arrived, for example right
   after installing the app). The app also keeps the last bags, character and map across

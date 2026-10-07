@@ -10,6 +10,9 @@ class ChatLogTest {
 
     @Test
     fun keepsLinesOnceInOrder() {
+        assertEquals(null, ChatFile.parse("10/7 20:33:01.000  Left Channel: |Hchannel:1140896|h[(null)]|h"))
+        assertEquals(ChatLine("system", "", "Joined Channel: [2. Trade - City]"), ChatFile.parse("10/7 20:33:01.000  Joined Channel: |Hchannel:CHANNEL:2|h[2. Trade - City]|h"))
+        assertEquals(ChatLine("say", "Bo", "got [Linen Cloth]"), ChatFile.parse("10/7 20:33:02.000  Bo says: got |cff9d9d9d|Hitem:2589::::|h[Linen Cloth]|h|r"))
         val log = ChatLog()
         assertEquals(true, log.add("TH1|77\tMoria-Deathknell,Owarh-Realm,,\n1\tsay\tMoria-Deathknell\t\tHello [Hearthstone] |pipe\n2\twhisper\tOwarh-Realm\t\tpsst"))
         // A refresh sends the same lines again, plus a new one.
@@ -28,6 +31,9 @@ class ChatLogTest {
 
     @Test
     fun channelLinesKeepTheWholeName() {
+        assertEquals(null, ChatFile.parse("10/7 20:33:01.000  Left Channel: |Hchannel:1140896|h[(null)]|h"))
+        assertEquals(ChatLine("system", "", "Joined Channel: [2. Trade - City]"), ChatFile.parse("10/7 20:33:01.000  Joined Channel: |Hchannel:CHANNEL:2|h[2. Trade - City]|h"))
+        assertEquals(ChatLine("say", "Bo", "got [Linen Cloth]"), ChatFile.parse("10/7 20:33:02.000  Bo says: got |cff9d9d9d|Hitem:2589::::|h[Linen Cloth]|h|r"))
         val log = ChatLog()
         log.add("TH1|5\tTrader-Some-Realm\n1\tchannel\tTrader-Some-Realm\tTrade\tWTS stuff")
         val line = log.lines.single()
@@ -38,6 +44,9 @@ class ChatLogTest {
 
     @Test
     fun offersWhispersOnlyForNamesWithAKeyNow() {
+        assertEquals(null, ChatFile.parse("10/7 20:33:01.000  Left Channel: |Hchannel:1140896|h[(null)]|h"))
+        assertEquals(ChatLine("system", "", "Joined Channel: [2. Trade - City]"), ChatFile.parse("10/7 20:33:01.000  Joined Channel: |Hchannel:CHANNEL:2|h[2. Trade - City]|h"))
+        assertEquals(ChatLine("say", "Bo", "got [Linen Cloth]"), ChatFile.parse("10/7 20:33:02.000  Bo says: got |cff9d9d9d|Hitem:2589::::|h[Linen Cloth]|h|r"))
         val log = ChatLog()
         log.add("TH1|5\tA,B,,\n1\tsay\tA\t\tone\n2\tsay\tB\t\ttwo")
         assertEquals(2, log.whisperSlot("B"))
@@ -50,6 +59,9 @@ class ChatLogTest {
 
     @Test
     fun newSessionStartsNumbersOver() {
+        assertEquals(null, ChatFile.parse("10/7 20:33:01.000  Left Channel: |Hchannel:1140896|h[(null)]|h"))
+        assertEquals(ChatLine("system", "", "Joined Channel: [2. Trade - City]"), ChatFile.parse("10/7 20:33:01.000  Joined Channel: |Hchannel:CHANNEL:2|h[2. Trade - City]|h"))
+        assertEquals(ChatLine("say", "Bo", "got [Linen Cloth]"), ChatFile.parse("10/7 20:33:02.000  Bo says: got |cff9d9d9d|Hitem:2589::::|h[Linen Cloth]|h|r"))
         val log = ChatLog()
         log.add("TH1|77\t\n1\tsay\tA\t\tbefore reload")
         assertTrue(log.add("TH1|99\t\n1\tsay\tA\t\tafter reload")!!)
@@ -66,6 +78,9 @@ class ChatLogTest {
 
     @Test
     fun readsTheChannelsYouAreIn() {
+        assertEquals(null, ChatFile.parse("10/7 20:33:01.000  Left Channel: |Hchannel:1140896|h[(null)]|h"))
+        assertEquals(ChatLine("system", "", "Joined Channel: [2. Trade - City]"), ChatFile.parse("10/7 20:33:01.000  Joined Channel: |Hchannel:CHANNEL:2|h[2. Trade - City]|h"))
+        assertEquals(ChatLine("say", "Bo", "got [Linen Cloth]"), ChatFile.parse("10/7 20:33:02.000  Bo says: got |cff9d9d9d|Hitem:2589::::|h[Linen Cloth]|h|r"))
         val log = ChatLog()
         assertTrue(log.add("TH1|1\tA\t1 General,2 Trade,4 LookingForGroup\n")!!)
         assertEquals(listOf(1 to "General", 2 to "Trade", 4 to "LookingForGroup"), log.channels)
@@ -76,6 +91,9 @@ class ChatLogTest {
 
     @Test
     fun putsLateLinesInWritingOrder() {
+        assertEquals(null, ChatFile.parse("10/7 20:33:01.000  Left Channel: |Hchannel:1140896|h[(null)]|h"))
+        assertEquals(ChatLine("system", "", "Joined Channel: [2. Trade - City]"), ChatFile.parse("10/7 20:33:01.000  Joined Channel: |Hchannel:CHANNEL:2|h[2. Trade - City]|h"))
+        assertEquals(ChatLine("say", "Bo", "got [Linen Cloth]"), ChatFile.parse("10/7 20:33:02.000  Bo says: got |cff9d9d9d|Hitem:2589::::|h[Linen Cloth]|h|r"))
         val log = ChatLog()
         // The party line (3) comes first, the older Trade line (2) after it.
         log.add("TH1|5\t\t\n1\tsay\tA\t\tone\n3\tparty\tB\t\tthree")
@@ -106,6 +124,9 @@ class ChatLogTest {
         assertEquals(ChatLine("say", "Sanbica", "hello"), ChatFile.parse("10/7/2026 19:51:39.000  Sanbica says: hello"))
         assertEquals(ChatLine("guild", "Bob", "gz"), ChatFile.parse("10/7 19:51:40.000  [Guild] Bob: gz"))
         assertEquals(ChatLine("channel", "Bo", "lfg", "General"), ChatFile.parse("10/7 19:51:41.000  [1. General - Brill] Bo: lfg"))
+        assertEquals(null, ChatFile.parse("10/7 20:33:01.000  Left Channel: |Hchannel:1140896|h[(null)]|h"))
+        assertEquals(ChatLine("system", "", "Joined Channel: [2. Trade - City]"), ChatFile.parse("10/7 20:33:01.000  Joined Channel: |Hchannel:CHANNEL:2|h[2. Trade - City]|h"))
+        assertEquals(ChatLine("say", "Bo", "got [Linen Cloth]"), ChatFile.parse("10/7 20:33:02.000  Bo says: got |cff9d9d9d|Hitem:2589::::|h[Linen Cloth]|h|r"))
         val log = ChatLog()
         log.add(ChatFile.parse("10/7 19:51:34.843  [2. Trade] Azlyn Lee: Olympus?")!!)
         assertEquals(1, log.lines.size)

@@ -105,6 +105,9 @@ object ChatFile {
     private val TIME = Regex("""^\d{1,2}/\d{1,2}(?:/\d{2,4})? \d{1,2}:\d{2}:\d{2}(?:\.\d+)?\s+""")
     private val CHANNEL = Regex("""^\[(\d+)\. ([^\]]+)] (.+?): (.*)$""")
     private val BRACKET = Regex("""^\[([^\]]+)] (.+?): (.*)$""")
+    private val LINK = Regex("""\|H[^|]*\|h(.*?)\|h""")
+    private val COLOUR = Regex("""\|c[0-9a-fA-F]{8}""")
+    private val LOG_SWITCH = Regex("""^(?:Left|Joined|Changed) Channel: \[\(null\)]$""")
     private val SPOKEN = Regex("""^(.+?) (says|yells|whispers): (.*)$""")
     private val TO = Regex("""^To (.+?): (.*)$""")
     private val GROUPS = mapOf(
@@ -115,7 +118,8 @@ object ChatFile {
     )
 
     fun parse(raw: String): ChatLine? {
-        val line = raw.replace(TIME, "").trim()
+        // Links and colours as the chat frame would show them: "|Hitem:...|h[Linen Cloth]|h" is "[Linen Cloth]".
+        val line = raw.replace(TIME, "").replace(LINK, "$1").replace(COLOUR, "").replace("|r", "").trim()
         if (line.isEmpty()) return null
         CHANNEL.find(line)?.let { m ->
             val (_, channel, sender, text) = m.destructured
@@ -138,6 +142,8 @@ object ChatFile {
             return ChatLine("whisper_to", sender, text)
         }
         if (NOISE.any { it.containsMatchIn(line) }) return null
+        // The addon switching the log off and on (to have it written out) leaves these.
+        if (LOG_SWITCH.matches(line)) return null
         return ChatLine("system", "", line)
     }
 

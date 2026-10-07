@@ -285,6 +285,9 @@ function ns.MapUrgent() mapUrgent = true end
 local bagsUrgent = false
 -- A new line from your group, a whisper or the guild goes before everything else.
 local chatUrgent = false
+-- After a loading screen (a login above all) the status goes first: it says which
+-- character this is, and the app keeps nothing else until it knows.
+local statusUrgent = true
 function ns.ChatUrgent() chatUrgent = true end
 local bagEvents = CreateFrame("Frame")
 bagEvents:RegisterEvent("BAG_UPDATE_DELAYED")
@@ -293,7 +296,11 @@ bagEvents:SetScript("OnEvent", function() bagsUrgent = true end)
 local showingTurn
 local function nextMessage()
     local id = C_Map.GetBestMapForUnit("player")
-    if chatUrgent then
+    if statusUrgent then
+        turn = 0  -- the status (1) is next, sent even when it is the same as before
+        statusAt = -STATUS_AGAIN - 1
+        statusUrgent = false
+    elseif chatUrgent then
         turn = 3  -- the chat (4) is next
         chatUrgent = false
     elseif bagsUrgent then
@@ -379,6 +386,7 @@ loadEvents:SetScript("OnEvent", function(_, event)
     else
         loading = false
         quietUntil = GetTime() + 3
+        statusUrgent = true
     end
 end)
 local f = CreateFrame("Frame")

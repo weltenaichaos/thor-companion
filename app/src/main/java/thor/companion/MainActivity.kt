@@ -411,52 +411,26 @@ class MainActivity : Activity() {
                 misses = 0
                 frameAt = SystemClock.uptimeMillis()
                 near = frame.row
-                // A small change (TD1) becomes the whole message again, from the last one the app kept.
-                val message = assembler.add(frame)?.let { m ->
-                    if (m.startsWith("TD1|")) Delta.apply(m) { lastMessages[it] } else m
-                }
-                val page = message?.let { ItemNames.parse(it) }
-                if (message?.startsWith("TS1|") == true) {
-                    movedAt = SystemClock.uptimeMillis()
-                    val name = message.split('|').getOrNull(1)
-                    if (name != null && name != "error" && name != "?" && name != keptFor) switchCharacter(name)
-                }
-                if (message != null && seenAt == 0L) seenAt = SystemClock.uptimeMillis()
-                if (message != null) remember(message)
-                when {
-                    message == null -> {}
-                    message.startsWith("TH1|") -> runOnUiThread { onChat(message) }
-                    message.startsWith("TM1|") -> ZoneMap.parse(message)?.let { runOnUiThread { onMap(it) } }
-                    message.startsWith("TP1|") -> CharacterInfo.parse(message)?.let { runOnUiThread { onCharacter(it, gear) } }
-                    message.startsWith("TQ1|") -> Gear.parse(message)?.let { runOnUiThread { onCharacter(character, it) } }
-                    message.startsWith("TW1|") -> MapPicture.parse(message)?.let { takeMapPicture(it, message) }
-                    message.startsWith("TI1|") -> IconPicture.parse(message)?.let { takeIcons(it, assembler.lastSeq) }
-                    message.startsWith("TE1|") -> message.split('|').let { f ->
-                        f.getOrNull(1)?.toIntOrNull()?.let { n ->
-                            chatBox = ChatBox(n, f.getOrNull(2) == "open", f.getOrNull(3).orEmpty(), f.getOrNull(4)?.toIntOrNull())
+                val message = assembler.add(frame)
+                if (message != null) {
+                    if (seenAt == 0L) seenAt = SystemClock.uptimeMillis()
+                    if (message.startsWith("TS1|") || !awaitStatus) {
+                        handle(message, assembler.lastSeq)
+                        // Who is playing is known now: what came before the status is theirs.
+                        if (message.startsWith("TS1|") && awaitStatus) {
+                            awaitStatus = false
+                            runOnUiThread { loadingSince = SystemClock.uptimeMillis() }
+                            while (held.isNotEmpty()) handle(held.removeFirst(), -1)
                         }
+                    } else if (!message.startsWith("TW1|") && !message.startsWith("TI1|")) {
+                        // Until the status says which character this is, nothing is kept or shown:
+                        // it could be another character's bags than the ones the app holds.
+                        held.addLast(message)
+                        while (held.size > 40) held.removeFirst()
                     }
-                    message.startsWith("TU1|") -> ItemUse.parse(message)?.let { runOnUiThread { onUse(it) } }
-                    message.startsWith("TC2|") -> Cooldowns.parse(message)?.let { runOnUiThread { onCooldowns(it) } }
-                    message.startsWith("TL1|") -> QuestLog.parse(message)?.let {
-                        questFirst = it
-                        val all = questPages.whole(it)
-                        runOnUiThread { onQuests(all) }
-                    }
-                    message.startsWith("TL2|") -> if (questPages.add(message) == true) questFirst?.let {
-                        val all = questPages.whole(it)
-                        runOnUiThread { onQuests(all) }
-                    } else if (!ready) runOnUiThread { render() }
-                    message.startsWith("TV1|") -> SpellPlan.parse(message)?.let { runOnUiThread { onSpells(it) } }
-                    message.startsWith("TT1|") -> ItemTips.parse(message)?.let { tips.addAll(it) }
-                    page != null -> {
-                        val changed = names.addAll(page)
-                        runOnUiThread { onNames(changed) }
-                    }
-                    else -> runOnUiThread { onMessage(message) }
+                    // While the start-up card shows, each message may tick something off.
+                    if (!ready) runOnUiThread { if (!ready) render() }
                 }
-                // While the start-up card shows, each message may tick something off.
-                if (message != null && !ready) runOnUiThread { if (!ready) render() }
             } else if (++misses == 4) {
                 near = -1
                 val why = when {
@@ -481,17 +455,75 @@ class MainActivity : Activity() {
             // goes away it waits a while, then looks only now and then until it is back.
             // Only a square that isn't there counts: a damaged read (the square changed
             // while it was taken) is read again at the usual pace.
-            if (result is StripDecoder.Result.Ok) { absent = 0; seenSquare = true } else absent++
+            if (result is StripDecoder.Result.Ok) {
+                absent = 0; seenSquare = true
+                if (away) { away = false; runOnUiThread { render() } }
+            } else absent++
+            // Gone for a few seconds: logged out, the character screen or a loading screen.
+            // The card stands in for the tabs until the game says again who is playing,
+            // so the last character's bags are not shown (or tapped) for the next one.
+            if (absent == 3 && seenSquare && !away) {
+                away = true
+                awaitStatus = true
+                runOnUiThread { startLoading() }
+            }
             val period = when {
                 absent > 0 && !seenSquare -> 10_000L
                 absent in 1..4 -> 1000L
-                absent == 5 -> 30_000L
+                absent == 5 -> 10_000L
                 absent > 5 -> 5000L
                 fast -> 200L
                 walking -> 250L
                 else -> 1000L
             }
             SystemClock.sleep((period - (SystemClock.uptimeMillis() - t0)).coerceIn(30, period))
+        }
+    }
+
+    /** Messages that came while the app waits for the status (see [awaitStatus]), oldest first. */
+    private val held = ArrayDeque<String>()
+
+    /** One whole message from the addon (runs on the reading thread); [seq] is its frame's, -1 for one that was held back. */
+    private fun handle(raw: String, seq: Int) {
+        // A small change (TD1) becomes the whole message again, from the last one the app kept.
+        val message = if (raw.startsWith("TD1|")) Delta.apply(raw) { lastMessages[it] } ?: return else raw
+        val page = ItemNames.parse(message)
+        if (message.startsWith("TS1|")) {
+            movedAt = SystemClock.uptimeMillis()
+            val name = message.split('|').getOrNull(1)
+            if (name != null && name != "error" && name != "?" && name != keptFor) switchCharacter(name)
+        }
+        remember(message)
+        when {
+            message.startsWith("TH1|") -> runOnUiThread { onChat(message) }
+            message.startsWith("TM1|") -> ZoneMap.parse(message)?.let { runOnUiThread { onMap(it) } }
+            message.startsWith("TP1|") -> CharacterInfo.parse(message)?.let { runOnUiThread { onCharacter(it, gear) } }
+            message.startsWith("TQ1|") -> Gear.parse(message)?.let { runOnUiThread { onCharacter(character, it) } }
+            message.startsWith("TW1|") -> MapPicture.parse(message)?.let { takeMapPicture(it, message) }
+            message.startsWith("TI1|") -> IconPicture.parse(message)?.let { if (seq >= 0) takeIcons(it, seq) }
+            message.startsWith("TE1|") -> message.split('|').let { f ->
+                f.getOrNull(1)?.toIntOrNull()?.let { n ->
+                    chatBox = ChatBox(n, f.getOrNull(2) == "open", f.getOrNull(3).orEmpty(), f.getOrNull(4)?.toIntOrNull())
+                }
+            }
+            message.startsWith("TU1|") -> ItemUse.parse(message)?.let { runOnUiThread { onUse(it) } }
+            message.startsWith("TC2|") -> Cooldowns.parse(message)?.let { runOnUiThread { onCooldowns(it) } }
+            message.startsWith("TL1|") -> QuestLog.parse(message)?.let {
+                questFirst = it
+                val all = questPages.whole(it)
+                runOnUiThread { onQuests(all) }
+            }
+            message.startsWith("TL2|") -> if (questPages.add(message) == true) questFirst?.let {
+                val all = questPages.whole(it)
+                runOnUiThread { onQuests(all) }
+            }
+            message.startsWith("TV1|") -> SpellPlan.parse(message)?.let { runOnUiThread { onSpells(it) } }
+            message.startsWith("TT1|") -> ItemTips.parse(message)?.let { tips.addAll(it) }
+            page != null -> {
+                val changed = names.addAll(page)
+                runOnUiThread { onNames(changed) }
+            }
+            else -> runOnUiThread { onMessage(message) }
         }
     }
 
@@ -747,6 +779,10 @@ class MainActivity : Activity() {
     private var live = false
     /** When the first message of any kind came from the game since the app started (0 before). */
     @Volatile private var seenAt = 0L
+    /** True until a status came after the app started or after the square was gone: until then nobody knows who is playing. */
+    @Volatile private var awaitStatus = true
+    /** The square has been gone for a few seconds (logged out, the character screen, a loading screen). */
+    @Volatile private var away = false
     private var liveSession: String? = null
     private var loadingSince = 0L
     /** The character whose data was put away for the one now logged in, for the card's first line. */
@@ -770,8 +806,10 @@ class MainActivity : Activity() {
     private fun renderLoading(): Boolean {
         for ((_, b) in tabs) b.alpha = 0.35f
         val s = state
-        val parts = if (live) Readiness.parts(s, lastMessages, bagsFresh) { names[it] != null } else null
-        if (live && (parts == null || Readiness.done(parts))) {
+        val known = live && !awaitStatus && s != null
+        val parts = if (known) Readiness.parts(s, lastMessages, bagsFresh) { names[it] != null } else null
+        // An addon without checksums (older than 0.18.7) gives nothing to wait for.
+        if (known && (parts == null || Readiness.done(parts))) {
             finishLoading()
             for ((_, b) in tabs) b.alpha = 1f
             return false
@@ -780,23 +818,27 @@ class MainActivity : Activity() {
         scroll.postDelayed(loadingTick, 1000)
         val box = card().apply { background = Theme.box(context, SURFACE, 14, ACCENT); setPadding(dp(18), dp(16), dp(18), dp(16)) }
         val seen = seenAt != 0L
-        val who = s?.name?.takeIf { live && it != "?" }
+        val who = s?.name?.takeIf { known && it != "?" }
         box.addView(line(when {
+            away -> "Waiting for a character"
             who != null -> "Getting $who ready"
-            seen -> "Getting ready"
+            seen -> "Checking who is playing…"
             else -> "Looking for the game…"
         }, TEXT, 18f, bold = true).apply { setPadding(0, 0, 0, 0) })
         val c = character
         val sub = when {
+            away -> "The game shows no data square: logged out, on the character screen or a loading screen. " +
+                (keptFor?.let { "$it's data is put away until the game says who is playing." } ?: "")
             !seen -> "Open WoW Forever with the Forever Companion addon on."
-            !live -> "Found the game; waiting for its status (it comes every few seconds)."
-            switchedFrom != null -> "Switched character: $switchedFrom's data was put away"
+            !known -> "Found the game; its status says which character is in (it comes right after loading, or within 10 s)."
+            switchedFrom != null -> "Switched from $switchedFrom; their data is put away"
             else -> listOfNotNull(s?.level?.let { "Level $it" }, c?.race, c?.className).joinToString(" ").let { l ->
                 listOf(l, zoneMap?.zone.orEmpty()).filter { it.isNotEmpty() }.joinToString("  ·  ")
             }
         }
         if (sub.isNotEmpty()) box.addView(line(sub, DIM, 13f).apply { setPadding(0, dp(4), 0, dp(10)) })
-        for (part in parts.orEmpty()) {
+        val rows = parts ?: if (seen && !away) PLACEHOLDER.map { Readiness.Part(it, Readiness.Status.MISSING, "waiting") } else emptyList()
+        for (part in rows) {
             val r = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, dp(6), 0, dp(6))
@@ -822,9 +864,10 @@ class MainActivity : Activity() {
             box.addView(Bar(this).apply { value = done.toFloat() / parts.size; colour = ACCENT }, LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(12) })
         }
         val waited = SystemClock.uptimeMillis() - (if (live) loadingSince else seenAt)
-        val slow = seen && waited > SLOW_MS
+        val slow = seen && !away && waited > SLOW_MS
         box.addView(line(
-            if (slow) "The game sends what changed by itself. For the rest, one tap asks it for everything."
+            if (away) "The app looks again every few seconds and carries on as soon as the game is back."
+            else if (slow) "The game sends what changed by itself. For the rest, one tap asks it for everything."
             else if (seen) "The tabs open as soon as everything is in. Nothing can be tapped before that, so no tap goes to an old bag slot."
             else "Already open? Then the data square may be hidden (/thor), or the app reads the other screen (hold the dot).",
             DIM, 12.5f).apply { setPadding(0, dp(12), 0, 0) })
@@ -2011,6 +2054,8 @@ class MainActivity : Activity() {
         const val NOTICE_MS = 6000L
         /** After this long on the start-up card, it offers to ask the game for everything, or to open anyway. */
         const val SLOW_MS = 15_000L
+        /** The start-up card's rows before the status says what there is. */
+        val PLACEHOLDER = listOf("Character and gear", "Bags", "Item names", "Map", "Quests", "Spells to learn")
         /** The request code of the folder picker for the Thor-Forever folder. */
         const val CHOOSE_KIT = 41
         val KEPT = setOf("TS1|", "TB1|", "TM1|", "TP1|", "TQ1|", "TL1|", "TV1|")

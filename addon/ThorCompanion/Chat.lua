@@ -196,6 +196,21 @@ local function add(kind, sender, channel, text)
     if kind ~= "channel" and kind ~= "system" and ns.ChatUrgent and not fileChat() then ns.ChatUrgent() end
 end
 
+-- The game keeps the chat log's lines in memory until it has a few kilobytes of them,
+-- so in a quiet chat the file (and the app) would lag by minutes. Switching the log
+-- off and on again (silently, unlike /chatlog) writes them out: once a line comes,
+-- at most once a second.
+local flushAt, flushing = 0, false
+local function flushLog()
+    if flushing or not fileChat() then return end
+    flushing = true
+    C_Timer.After(math.max(0.2, flushAt + 1 - GetTime()), function()
+        flushing = false
+        flushAt = GetTime()
+        pcall(function() LoggingChat(false) LoggingChat(true) end)
+    end)
+end
+
 local f = CreateFrame("Frame")
 for event in pairs(KINDS) do f:RegisterEvent(event) end
 f:SetScript("OnEvent", function(_, event, text, sender, _, channelName)
@@ -206,6 +221,7 @@ f:SetScript("OnEvent", function(_, event, text, sender, _, channelName)
         sender = ""
     end
     add(kind, sender, kind == "channel" and channelName or "", text)
+    flushLog()
 end)
 
 -- The public channels you are in: "1 General,2 Trade,...".

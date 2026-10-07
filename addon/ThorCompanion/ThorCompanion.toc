@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: Forever Companion
 ## Notes: Shows game data on the Ayn Thor's bottom screen through a small dark square in the top-right corner, and lets a tap on a bag item there use it (one tap, one key press).
-## Version: 0.20.2
+## Version: 0.21.0
 ## SavedVariables: ThorCompanionDB
 ## SavedVariablesPerCharacter: ThorCompanionKill
 

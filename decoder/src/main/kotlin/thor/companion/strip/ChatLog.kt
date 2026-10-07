@@ -41,6 +41,21 @@ class ChatLog(private val keep: Int = 200) {
     fun whisperSlot(sender: String): Int? =
         if (sender.isEmpty()) null else whisperNames.indexOf(sender).takeIf { it >= 0 }?.plus(1)
 
+    /** Adds one line read from the game's chat log file ([ChatFile]), after all the others. */
+    fun add(line: ChatLine) {
+        val key = "file:" + total
+        seen.add(key)
+        order.add(key)
+        rank.add(Long.MAX_VALUE)
+        _lines.add(line)
+        total++
+        if (_lines.size > keep) {
+            _lines.removeFirst()
+            rank.removeFirst()
+            seen.remove(order.removeFirst())
+        }
+    }
+
     /** Adds the lines of [payload]; true when anything changed. Null when it isn't a TH1 message. */
     fun add(payload: String): Boolean? {
         if (!payload.startsWith("TH1|")) return null
@@ -76,5 +91,52 @@ class ChatLog(private val keep: Int = 200) {
             }
         }
         return added
+    }
+}
+
+/**
+ * A line of the game's chat log (Logs/WoWChatLog.txt, written while chat logging is on):
+ *   10/7 19:51:34.843  [2. Trade] Azlyn Lee: Olympus?
+ *   10/7 19:51:35.202  Zaria Stormstrike creates Light Armor Kit.
+ * as a [ChatLine] of the kinds the addon uses. Names can have spaces; what isn't
+ * someone talking (crafting, loot, emotes, the game's messages) is "system".
+ */
+object ChatFile {
+    private val TIME = Regex("""^\d{1,2}/\d{1,2}(?:/\d{2,4})? \d{1,2}:\d{2}:\d{2}(?:\.\d+)?\s+""")
+    private val CHANNEL = Regex("""^\[(\d+)\. ([^\]]+)] (.+?): (.*)$""")
+    private val BRACKET = Regex("""^\[([^\]]+)] (.+?): (.*)$""")
+    private val SPOKEN = Regex("""^(.+?) (says|yells|whispers): (.*)$""")
+    private val TO = Regex("""^To (.+?): (.*)$""")
+    private val GROUPS = mapOf(
+        "Party" to "party", "Party Leader" to "party",
+        "Raid" to "raid", "Raid Leader" to "raid", "Raid Warning" to "raid",
+        "Instance" to "instance", "Instance Leader" to "instance",
+        "Guild" to "guild", "Officer" to "guild",
+    )
+
+    fun parse(raw: String): ChatLine? {
+        val line = raw.replace(TIME, "").trim()
+        if (line.isEmpty()) return null
+        CHANNEL.find(line)?.let { m ->
+            val (_, channel, sender, text) = m.destructured
+            return ChatLine("channel", sender, text, channel.substringBefore(" - "))
+        }
+        BRACKET.find(line)?.let { m ->
+            val (group, sender, text) = m.destructured
+            GROUPS[group]?.let { return ChatLine(it, sender, text) }
+        }
+        SPOKEN.find(line)?.let { m ->
+            val (sender, verb, text) = m.destructured
+            val kind = when (verb) { "says" -> "say"; "yells" -> "yell"; else -> "whisper" }
+            // Battle.net friends come with a protected name /w can't use.
+            if (kind == "whisper" && sender.contains("|K")) return ChatLine("bnwhisper", "", text)
+            return ChatLine(kind, sender, text)
+        }
+        TO.find(line)?.let { m ->
+            val (sender, text) = m.destructured
+            if (sender.contains("|K")) return ChatLine("bnwhisper_to", "", text)
+            return ChatLine("whisper_to", sender, text)
+        }
+        return ChatLine("system", "", line)
     }
 }

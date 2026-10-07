@@ -21,6 +21,7 @@ import thor.companion.strip.ChatLine
 import thor.companion.strip.Gear
 import thor.companion.strip.GearItem
 import thor.companion.strip.ChatLog
+import thor.companion.strip.ChatFile
 import thor.companion.strip.Cooldowns
 import thor.companion.strip.BagItem
 import thor.companion.strip.Compass
@@ -559,42 +560,13 @@ class MainActivity : Activity() {
         }
     }
 
-    /**
-     * Test of chat from the game's chat log file (instead of the square): how many lines
-     * came, how late after they were said, and the last few as written, shown in the Chat tab.
-     */
-    private val chatFile = ArrayDeque<String>()
-    @Volatile private var chatFileCount = 0
-    @Volatile private var chatFileDelay: Double? = null
-
-    private fun onChatFile(line: String, now: Long) {
-        synchronized(chatFile) {
-            chatFile.addLast(line)
-            while (chatFile.size > 4) chatFile.removeFirst()
+    /** A line of the game's chat log file: the chat comes from there, not the square (see [ChatFile]). */
+    private fun onChatFile(raw: String) {
+        val line = ChatFile.parse(raw) ?: return
+        runOnUiThread {
+            chat.add(line)
+            if (panel == Panel.CHAT) render() else updateBadges()
         }
-        chatFileCount++
-        // The line's time of day ("17:31:16.123"); seconds within the hour, so a time zone the game sees differently doesn't matter.
-        Regex("""(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?""").find(line)?.let { m ->
-            val (_, mm, ss, ms) = m.destructured
-            val said = mm.toInt() * 60 + ss.toInt() + (ms.ifEmpty { "0" }.padEnd(3, '0').toInt() / 1000.0)
-            val cal = java.util.Calendar.getInstance().apply { timeInMillis = now }
-            val heard = cal.get(java.util.Calendar.MINUTE) * 60 + cal.get(java.util.Calendar.SECOND) + cal.get(java.util.Calendar.MILLISECOND) / 1000.0
-            chatFileDelay = ((heard - said) % 3600 + 3600) % 3600
-        }
-        runOnUiThread { if (panel == Panel.CHAT && composing == null) render() }
-    }
-
-    /** The test line in the Chat tab: whether lines come from the log file, and how late. */
-    private fun chatFileCard(): View {
-        val box = card().apply { setPadding(dp(12), dp(8), dp(12), dp(8)) }
-        val delay = chatFileDelay
-        box.addView(line(when {
-            chatFileCount == 0 -> "Chat log file: nothing yet"
-            delay == null -> "Chat log file: $chatFileCount lines (no time in them)"
-            else -> String.format(Locale.US, "Chat log file: %d lines, the newest %.1f s after it was said", chatFileCount, delay)
-        }, ACCENT, 13f, bold = true).apply { setPadding(0, 0, 0, 0) })
-        for (l in synchronized(chatFile) { chatFile.toList() }) box.addView(line(l, DIM, 11.5f).apply { setPadding(0, dp(2), 0, 0) })
-        return box
     }
 
     private fun onGameEvent(line: String) {
@@ -626,7 +598,7 @@ class MainActivity : Activity() {
             }
             "O" -> if (game == Game.IN_WORLD || game == Game.LOADING || game == Game.UNKNOWN) game = Game.OUT
             "X" -> game = Game.CLOSED
-            "C" -> { onChatFile(arg, System.currentTimeMillis()); return }
+            "C" -> { onChatFile(arg); return }
             else -> return
         }
         gameAt = now
@@ -1306,7 +1278,6 @@ class MainActivity : Activity() {
         markSeen(chatTab)
         updateBadges()
 
-        content.addView(chatFileCard(), cardParams())
         val shown = chat.lines.filter { chatTab.kinds == null || it.kind in chatTab.kinds!! }
         if (shown.isEmpty()) {
             content.addView(empty(if (chat.lines.isEmpty()) "No chat yet" else "Nothing here yet",

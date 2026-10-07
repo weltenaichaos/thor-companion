@@ -1,6 +1,7 @@
 -- Chat.lua
 -- Keeps the recent chat lines so the app's Chat tab can show them. Sent as
 --   TH1|<session><tab><whisper names><tab><channels><newline><id><tab><kind><tab><sender><tab><channel><tab><text><newline>...
+-- (no lines at all while the game's chat log is on: the app reads them from the file)
 -- with only the lines the app has not been sent yet (after a refresh, the last
 -- few again). <session> changes with every login or /reload, so the app knows
 -- when the line numbers start over. <sender> is Name-Realm as the game gives it.
@@ -160,6 +161,13 @@ chatOwner:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_LOGIN" or chatPending then ns.BindWhispers() end
 end)
 
+-- With the game's chat log on, the app reads the chat from that file (half a second
+-- after it is said): the square then carries only the head (whisper names, channels).
+local function fileChat()
+    local ok, on = pcall(LoggingChat)
+    return ok and on
+end
+
 local function add(kind, sender, channel, text)
     if kind == "channel" and ThorCompanionDB and ThorCompanionDB.chatChannels == false then return end
     if secret(text) then text = "(hidden by the game during combat)" else text = plain(tostring(text or "")) end
@@ -185,7 +193,7 @@ local function add(kind, sender, channel, text)
         sends[lines[1][1]] = nil
         table.remove(lines, 1)
     end
-    if kind ~= "channel" and kind ~= "system" and ns.ChatUrgent then ns.ChatUrgent() end
+    if kind ~= "channel" and kind ~= "system" and ns.ChatUrgent and not fileChat() then ns.ChatUrgent() end
 end
 
 local f = CreateFrame("Frame")
@@ -238,7 +246,9 @@ function ns.ChatPayload(again, peek)
         used = used + #entry + 1
         return true
     end
-    if again then
+    if fileChat() then
+        -- Only the head, when it changed.
+    elseif again then
         for _, l in ipairs(lines) do
             if l[1] >= nextId - RESEND then take(l) end
         end

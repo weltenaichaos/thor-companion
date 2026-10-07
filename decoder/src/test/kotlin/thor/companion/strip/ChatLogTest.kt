@@ -90,4 +90,20 @@ class ChatLogTest {
     fun ignoresOtherMessages() {
         assertNull(ChatLog().add("TS1|x|1|0|0|0|0"))
     }
+
+    @Test
+    fun linesFromTheChatLogFile() {
+        assertEquals(ChatLine("channel", "Azlyn Lee", "Olympus?", "Trade"), ChatFile.parse("10/7 19:51:34.843  [2. Trade] Azlyn Lee: Olympus?"))
+        assertEquals(ChatLine("system", "", "Zaria Stormstrike creates Light Armor Kit."), ChatFile.parse("10/7 19:51:35.202  Zaria Stormstrike creates Light Armor Kit."))
+        assertEquals(ChatLine("party", "Pagrin", "on my way: 2 min"), ChatFile.parse("10/7 19:51:36.000  [Party Leader] Pagrin: on my way: 2 min"))
+        assertEquals(ChatLine("whisper", "Moria-Deathknell", "hi"), ChatFile.parse("10/7 19:51:37.000  Moria-Deathknell whispers: hi"))
+        assertEquals(ChatLine("whisper_to", "Moria-Deathknell", "hey"), ChatFile.parse("10/7 19:51:38.000  To Moria-Deathknell: hey"))
+        assertEquals(ChatLine("say", "Sanbica", "hello"), ChatFile.parse("10/7/2026 19:51:39.000  Sanbica says: hello"))
+        assertEquals(ChatLine("guild", "Bob", "gz"), ChatFile.parse("10/7 19:51:40.000  [Guild] Bob: gz"))
+        assertEquals(ChatLine("channel", "Bo", "lfg", "General"), ChatFile.parse("10/7 19:51:41.000  [1. General - Brill] Bo: lfg"))
+        val log = ChatLog()
+        log.add(ChatFile.parse("10/7 19:51:34.843  [2. Trade] Azlyn Lee: Olympus?")!!)
+        assertEquals(1, log.lines.size)
+        assertEquals(1, log.total)
+    }
 }

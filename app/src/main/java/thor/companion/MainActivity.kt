@@ -620,6 +620,8 @@ class MainActivity : Activity() {
                 // Also after a /reload, which writes the saved settings (O) and loads them again.
                 if (game == Game.LOADING || game == Game.OUT || game == Game.STARTING) {
                     game = Game.LOADING; gameCharacter = arg; addonsAt = now
+                    val name = arg.substringBefore('-')
+                    if (name.isNotEmpty() && name != keptFor) switchCharacter(name)
                 }
             }
             "O" -> if (game == Game.IN_WORLD || game == Game.LOADING || game == Game.UNKNOWN) game = Game.OUT

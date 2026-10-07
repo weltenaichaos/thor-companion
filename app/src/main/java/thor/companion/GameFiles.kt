@@ -127,6 +127,7 @@ class GameFiles(private val out: Writer, hint: String?) {
                     writtenAt = now
                     if ((event and FileObserver.MOVED_TO) != 0 && path.endsWith(".lua") && inWorld && character == name) {
                         inWorld = false; addons = false
+                        outAt = now
                         say("O $name")
                     }
                 }
@@ -155,7 +156,21 @@ class GameFiles(private val out: Writer, hint: String?) {
         }
     }
 
+    /** When a character's saved settings were last written (logout or quit). */
+    private var outAt = 0L
+
     private fun entered(name: String) {
+        // Quitting, the game opens other characters' files too, after the saving: soon
+        // after a logout a login only counts if the game is still running a moment later.
+        if (android.os.SystemClock.uptimeMillis() - outAt < 30_000) {
+            Thread {
+                Thread.sleep(8000)
+                if (!stopped && process() != null) synchronized(this) { if (!inWorld) enter(name) }
+            }.start()
+        } else enter(name)
+    }
+
+    private fun enter(name: String) {
         if (!running) { running = true; say("S") }
         character = name; inWorld = true; addons = false
         say("L $name")

@@ -64,8 +64,10 @@ later on will be one key press per tap.
    quests update sooner; changed bags go before everything else. The map arrow glides
    between positions instead of jumping.
    **The app installs the addon:** the APK carries the addon, and at start the app puts
-   that version into Thor Forever's Download/Thor-Forever/AddOns folder (when it holds
-   another version); the launcher copies it into the game at the next start.
+   that version into the AddOns folder of each Thor-Forever folder it finds in shared
+   storage (one with Thor-Forever.exe and installer/launch-game.sh, Download/Thor-Forever
+   by default; when it holds another version); the launcher copies it into the game at
+   the next start.
    While the square isn't on the screen (the game starting, the character screen, a
    loading screen) the app reads the game's screen only every 10 seconds (30 seconds
    right after the square went away, then every 5): screenshots taken while the game
@@ -80,7 +82,8 @@ calibration shades and a checksum. `addon/ThorCompanion/Strip.lua` describes the
 ## Install
 
 **Addon:** copy `addon/ThorCompanion` into the game's `Interface\AddOns` folder. With
-Thor Forever Reforged, put it in `Download/Thor-Forever/AddOns` and it is copied in
+Thor Forever Reforged, put it in the `AddOns` folder of your Thor-Forever folder
+(`Download/Thor-Forever/AddOns` by default) and it is copied in
 when the game starts. In game:
 
 - `/thor` shows the data being sent (state, bags and the next page of item names).

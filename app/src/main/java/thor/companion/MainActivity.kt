@@ -396,6 +396,7 @@ class MainActivity : Activity() {
         var misses = 0
         var seenSquare = false
         var absent = 0
+        var messageAt = 0L
         var near = -1
         val assembler = PartAssembler()
         while (worker === Thread.currentThread()) {
@@ -414,6 +415,8 @@ class MainActivity : Activity() {
                 val message = assembler.add(frame)
                 if (message != null) {
                     if (seenAt == 0L) seenAt = SystemClock.uptimeMillis()
+                    messageAt = SystemClock.uptimeMillis()
+                    if (away) { away = false; runOnUiThread { render() } }
                     if (message.startsWith("TS1|") || !awaitStatus) {
                         handle(message, assembler.lastSeq)
                         // Who is playing is known now: what came before the status is theirs.
@@ -457,12 +460,15 @@ class MainActivity : Activity() {
             // while it was taken) is read again at the usual pace.
             if (result is StripDecoder.Result.Ok) {
                 absent = 0; seenSquare = true
-                if (away) { away = false; runOnUiThread { render() } }
             } else absent++
             // Gone for a few seconds: logged out, the character screen or a loading screen.
             // The card stands in for the tabs until the game says again who is playing,
             // so the last character's bags are not shown (or tapped) for the next one.
-            if (absent == 3 && seenSquare && !away) {
+            // A square that stays but says nothing new is no game either: a closed game can
+            // leave its last picture on the top screen. The addon sends its status at least
+            // every 10 s, so nothing new for longer means it is gone.
+            val stale = messageAt != 0L && SystemClock.uptimeMillis() - messageAt > STALE_MS
+            if ((absent == 3 && seenSquare || stale) && !away) {
                 away = true
                 awaitStatus = true
                 runOnUiThread { startLoading() }
@@ -473,6 +479,7 @@ class MainActivity : Activity() {
                 absent == 5 -> 10_000L
                 absent > 5 -> 5000L
                 fast -> 200L
+                away -> 5000L
                 walking -> 250L
                 else -> 1000L
             }
@@ -831,7 +838,7 @@ class MainActivity : Activity() {
         }, TEXT, 18f, bold = true).apply { setPadding(0, 0, 0, 0) })
         val c = character
         val sub = when {
-            away -> "The game shows no data square: logged out, on the character screen or a loading screen. " +
+            away -> "No data from the game: logged out, on the character screen, a loading screen, or the game is closed. " +
                 (keptFor?.let { "$it's data is put away until the game says who is playing." } ?: "")
             !seen -> "Open WoW Forever with the Forever Companion addon on."
             !known -> "Found the game; its status says which character is in (it comes right after loading, or within 10 s)."
@@ -2058,6 +2065,8 @@ class MainActivity : Activity() {
         const val NOTICE_MS = 6000L
         /** After this long on the start-up card, it offers to ask the game for everything, or to open anyway. */
         const val SLOW_MS = 15_000L
+        /** No new message for this long: the game is gone (it sends its status at least every 10 s). */
+        const val STALE_MS = 25_000L
         /** The start-up card's rows before the status says what there is. */
         val PLACEHOLDER = listOf("Character and gear", "Bags", "Item names", "Map", "Quests", "Spells to learn")
         /** The request code of the folder picker for the Thor-Forever folder. */

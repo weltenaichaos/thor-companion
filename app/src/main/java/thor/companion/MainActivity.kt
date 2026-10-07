@@ -491,6 +491,9 @@ class MainActivity : Activity() {
             }
             val period = when {
                 game == Game.LOADING && result !is StripDecoder.Result.Ok -> 2000L
+                // Closed or on the character screen: only a look now and then, in case an event was missed.
+                game == Game.CLOSED && result !is StripDecoder.Result.Ok -> 30_000L
+                game == Game.STARTING && result !is StripDecoder.Result.Ok -> 10_000L
                 absent > 0 && !seenSquare -> 10_000L
                 absent in 1..4 -> 1000L
                 absent == 5 -> 10_000L
@@ -532,7 +535,6 @@ class MainActivity : Activity() {
     private fun blind(): Boolean {
         val now = SystemClock.uptimeMillis()
         return when (game) {
-            Game.CLOSED, Game.STARTING -> true
             // Loading into the world: no screenshot until the addons have loaded (the crash
             // came from screenshots while the game set up the world); if that is never
             // seen, look now and then after a minute.
@@ -961,7 +963,7 @@ class MainActivity : Activity() {
         }, TEXT, 18f, bold = true).apply { setPadding(0, 0, 0, 0) })
         val c = character
         val sub = when {
-            g == Game.CLOSED -> "Start WoW Forever; the app follows it from there. It leaves the top screen alone until you are in the world."
+            g == Game.CLOSED -> "Start WoW Forever; the app follows it from there."
             g == Game.STARTING -> "Log in and choose a character."
             g == Game.LOADING && addonsAt == 0L -> "Loading into the world…" + (switchedFrom?.let { " $it's data is put away." } ?: "")
             g == Game.LOADING && !seenSince(addonsAt) -> "Almost there: the addons are loading."
@@ -1005,7 +1007,7 @@ class MainActivity : Activity() {
         val waited = SystemClock.uptimeMillis() - (if (live) loadingSince else seenAt)
         val slow = seen && !away && g != Game.LOADING && waited > SLOW_MS
         box.addView(line(
-            if (g == Game.CLOSED || g == Game.STARTING || g == Game.OUT) "The game's own files tell the app when you enter the world; it doesn't look at the screen before that."
+            if (g == Game.CLOSED || g == Game.STARTING || g == Game.OUT) "The game's own files tell the app when you enter the world; until then it only glances at the screen now and then."
             else if (g == Game.LOADING) "The tabs open as soon as everything is in."
             else if (away) "The app looks again every few seconds and carries on as soon as the game is back."
             else if (slow) "The game sends what changed by itself. For the rest, one tap asks it for everything."

@@ -32,12 +32,14 @@ class GameFiles(private val out: Writer, hint: String?) {
     private var character: String? = null
     private var inWorld = false
     private var addons = false
+    /** Whether the game's process was found since it started: only then does its going away count. */
+    private var processSeen = false
 
     init {
         say("F ${folder?.path ?: "-"}")
         if (folder != null) {
             watch()
-            if (process() != null) { running = true; say("R") }
+            if (process() != null) { running = true; processSeen = true; say("R") }
             Thread { checkProcess() }.apply { isDaemon = true }.start()
         }
     }
@@ -70,7 +72,7 @@ class GameFiles(private val out: Writer, hint: String?) {
         val game = folder ?: return
         synchronized(observers) { observers.forEach { it.stopWatching() }; observers.clear() }
         add(File(game, "Logs"), FileObserver.OPEN) { _, _ ->
-            if (!running) { running = true; character = null; inWorld = false; say("S") }
+            if (!running) { running = true; processSeen = false; character = null; inWorld = false; say("S") }
         }
         val accounts = File(game, "WTF/Account")
         add(accounts, FileObserver.CREATE) { _, _ -> rewatch() }
@@ -134,7 +136,8 @@ class GameFiles(private val out: Writer, hint: String?) {
             Thread.sleep(if (running) 3000 else 10_000)
             val now = process() != null
             synchronized(this) {
-                if (running && !now) { running = false; inWorld = false; addons = false; character = null; say("X") }
+                if (now) processSeen = true
+                if (running && !now && processSeen) { running = false; inWorld = false; addons = false; character = null; say("X") }
                 else if (!running && now) { running = true; say("S") }
             }
         }

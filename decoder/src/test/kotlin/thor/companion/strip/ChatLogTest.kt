@@ -142,4 +142,13 @@ class ChatLogTest {
         log.add("TH1|s1\t\t\n2\tguild\tBob\t\tgz")
         assertEquals(listOf("wts", "omw", "lfg", "gz"), log.lines.map { it.text })
     }
+
+    @Test
+    fun whenALineWasSaid() {
+        val now = java.util.Calendar.getInstance().apply { set(2026, 9, 7, 20, 0, 10); set(java.util.Calendar.MILLISECOND, 0) }
+        assertEquals(now.timeInMillis - 9_500, ChatFile.saidAt("10/7 20:00:00.500  [2. Trade] Bo: hi", now))
+        val midnight = java.util.Calendar.getInstance().apply { set(2026, 9, 8, 0, 0, 5); set(java.util.Calendar.MILLISECOND, 0) }
+        assertEquals(midnight.timeInMillis - 10_000, ChatFile.saidAt("10/7 23:59:55.000  [2. Trade] Bo: hi", midnight))
+        assertNull(ChatFile.saidAt("no time"))
+    }
 }

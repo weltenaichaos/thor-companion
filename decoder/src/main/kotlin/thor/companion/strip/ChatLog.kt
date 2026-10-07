@@ -118,6 +118,19 @@ object ChatFile {
         "Guild" to "guild", "Officer" to "guild",
     )
 
+    /** When a log line was said (this device's clock, today or yesterday), from its time; null without one. */
+    fun saidAt(raw: String, now: java.util.Calendar = java.util.Calendar.getInstance()): Long? {
+        val m = SAID.find(raw) ?: return null
+        val (h, min, sec, frac) = m.destructured
+        val c = now.clone() as java.util.Calendar
+        c.set(java.util.Calendar.HOUR_OF_DAY, h.toInt()); c.set(java.util.Calendar.MINUTE, min.toInt())
+        c.set(java.util.Calendar.SECOND, sec.toInt())
+        c.set(java.util.Calendar.MILLISECOND, (("0." + frac.ifEmpty { "0" }).toDouble() * 1000).toInt())
+        if (c.timeInMillis > now.timeInMillis + 60_000) c.add(java.util.Calendar.DAY_OF_MONTH, -1)
+        return c.timeInMillis
+    }
+    private val SAID = Regex("""^\d{1,2}/\d{1,2}(?:/\d{2,4})? (\d{1,2}):(\d{2}):(\d{2})(?:\.(\d+))?""")
+
     fun parse(raw: String): ChatLine? {
         // Links and colours as the chat frame would show them: "|Hitem:...|h[Linen Cloth]|h" is "[Linen Cloth]".
         val line = raw.replace(TIME, "").replace(LINK, "$1").replace(COLOUR, "").replace("|r", "").trim()

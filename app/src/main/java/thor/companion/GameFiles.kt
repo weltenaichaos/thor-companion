@@ -23,6 +23,7 @@ import java.io.Writer
  *   O <Name-Realm>    the character's saved settings were written (logout, quit or /reload)
  *   X                 the game is closed
  *   C <line>          a new line in the game's chat log (Logs/WoWChatLog.txt, which the addon switches on)
+ *   D <bytes> <e|p|h> the chat log grew by that much, seen by a file event, by the look every 2 s, or at the start
  *   H <line>          one of its last lines from before the watching began (when written in the last minutes)
  * Only watches; changes nothing.
  */
@@ -47,6 +48,7 @@ class GameFiles(private val out: Writer, hint: String?) {
             if (process() != null) { running = true; processSeen = true; say("R") }
             seedChat(File(folder, "Logs/$CHAT_LOG"))
             Thread { checkProcess() }.apply { isDaemon = true }.start()
+            Thread { checkChat() }.apply { isDaemon = true }.start()
         }
     }
 
@@ -83,7 +85,7 @@ class GameFiles(private val out: Writer, hint: String?) {
             if ((event and FileObserver.OPEN) != 0 && !running) { running = true; processSeen = false; character = null; inWorld = false; say("S") }
             if (path == CHAT_LOG) {
                 if ((event and FileObserver.CREATE) != 0) chatOffset = 0
-                if ((event and FileObserver.MODIFY) != 0) tailChat(File(logs, CHAT_LOG))
+                if ((event and FileObserver.MODIFY) != 0) tailChat(File(logs, CHAT_LOG), via = "e")
             }
         }
         val accounts = File(game, "WTF/Account")
@@ -147,7 +149,7 @@ class GameFiles(private val out: Writer, hint: String?) {
     }
 
     /** The lines added to the chat log since last time. */
-    private fun tailChat(file: File, kind: String = "C") {
+    private fun tailChat(file: File, kind: String = "C", via: String = "h") {
         val length = file.length()
         if (length < chatOffset) chatOffset = 0  // started over
         if (length == chatOffset) return
@@ -158,6 +160,8 @@ class GameFiles(private val out: Writer, hint: String?) {
             }
         }.getOrNull() ?: return
         chatOffset += bytes.size
+        // For the app's check line: how much came, and whether a file event or the look every 2 s found it.
+        say("D ${bytes.size} $via")
         val text = chatPartial + String(bytes, Charsets.UTF_8)
         val lines = text.split('\n')
         chatPartial = lines.last()
@@ -186,6 +190,18 @@ class GameFiles(private val out: Writer, hint: String?) {
         if (!running) { running = true; say("S") }
         character = name; inWorld = true; addons = false
         say("L $name")
+    }
+
+    /**
+     * A look at the chat log's size every 2 seconds (cheap: no
+     * reading unless it grew), in case a write comes without a file event.
+     */
+    private fun checkChat() {
+        val file = File(folder ?: return, "Logs/$CHAT_LOG")
+        while (!stopped) {
+            Thread.sleep(2000)
+            synchronized(this) { if (file.length() != chatOffset) tailChat(file, via = "p") }
+        }
     }
 
     /** While the game runs, whether its process is still there (the only thing not told by a file). */

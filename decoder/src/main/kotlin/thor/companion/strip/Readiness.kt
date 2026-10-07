@@ -14,12 +14,15 @@ object Readiness {
     /**
      * The parts, from [state] (the latest TS1 and bags), the messages the app has by
      * kind ([kept], "TP1|" and so on, the quest pages as "TL2|2", "TL2|3", ...),
-     * whether the bags are confirmed ([bagsFresh]) and which item ids have names.
+     * whether the bags are confirmed ([bagsFresh]), the kinds that came from the game
+     * after that status ([fresh]: newer than its checksums, so right whatever they say)
+     * and which item ids have names.
      * Null when the addon sends no checksums (older than 0.18.7): then there is nothing to wait for.
      */
-    fun parts(state: GameState?, kept: Map<String, String>, bagsFresh: Boolean, hasName: (Int) -> Boolean): List<Part>? {
+    fun parts(state: GameState?, kept: Map<String, String>, bagsFresh: Boolean, fresh: Set<String> = emptySet(), hasName: (Int) -> Boolean): List<Part>? {
         val sums = state?.sums ?: return null
         fun same(kind: String, number: Int): Boolean? {
+            if (kind in fresh) return true
             val sent = sums[number] ?: return null
             if (sent == 0) return null
             val have = kept[kind] ?: return false
@@ -71,6 +74,7 @@ object Readiness {
             val sent = sums[11]
             val have = (2..pages).map { kept["TL2|$it"] }
             when {
+                (2..pages).all { "TL2|$it" in fresh } -> true
                 sent == null || sent == 0 -> null
                 have.any { it == null } -> false
                 else -> GameState.hash(have.joinToString("")) == sent

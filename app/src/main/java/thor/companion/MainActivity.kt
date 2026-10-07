@@ -287,6 +287,8 @@ class MainActivity : Activity() {
     /** How the bags are sorted: 0 as in the game, 1 type, 2 quality, 3 sell value. */
     private var bagSort = 0
     private val lastMessages = java.util.concurrent.ConcurrentHashMap<String, String>()
+    /** The kinds (as kept, "TP1|", "TL2|2") that came from the game since it last said who is playing: current whatever the status's checksums say. */
+    private val fresh: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     /** The character whose kept messages [lastMessages] holds; each character has its own file. */
     @Volatile private var keptFor: String? = null
     private fun lastFile(name: String?) =
@@ -364,6 +366,7 @@ class MainActivity : Activity() {
         val old = keptFor
         if (old != null) saveLast()
         lastMessages.clear()
+        fresh.clear()
         keptFor = name
         getPreferences(MODE_PRIVATE).edit().putString("keptFor", name).apply()
         for (m in readKept(name)) keptKey(m)?.let { lastMessages[it] = m }
@@ -471,6 +474,7 @@ class MainActivity : Activity() {
             if ((absent == 3 && seenSquare || stale) && !away) {
                 away = true
                 awaitStatus = true
+                fresh.clear()
                 runOnUiThread { startLoading() }
             }
             val period = when {
@@ -501,6 +505,7 @@ class MainActivity : Activity() {
             if (name != null && name != "error" && name != "?" && name != keptFor) switchCharacter(name)
         }
         remember(message)
+        keptKey(message)?.let { fresh += it }
         when {
             message.startsWith("TH1|") -> runOnUiThread { onChat(message) }
             message.startsWith("TM1|") -> ZoneMap.parse(message)?.let { runOnUiThread { onMap(it) } }
@@ -818,7 +823,7 @@ class MainActivity : Activity() {
         for ((_, b) in tabs) b.alpha = 0.35f
         val s = state
         val known = live && !awaitStatus && s != null
-        val parts = if (known) Readiness.parts(s, lastMessages, bagsFresh) { names[it] != null } else null
+        val parts = if (known) Readiness.parts(s, lastMessages, bagsFresh, fresh) { names[it] != null } else null
         // An addon without checksums (older than 0.18.7) gives nothing to wait for.
         if (known && (parts == null || Readiness.done(parts))) {
             finishLoading()

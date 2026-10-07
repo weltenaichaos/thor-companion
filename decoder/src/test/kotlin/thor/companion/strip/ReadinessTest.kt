@@ -35,6 +35,17 @@ class ReadinessTest {
     }
 
     @Test
+    fun whatCameAfterTheStatusCountsAtOnce() {
+        // A new character: the status came first, when nothing else had gone out yet.
+        val kept = mapOf("TP1|" to tp, "TQ1|" to tq, "TM1|" to tm, "TB1|" to tb)
+        val parts = Readiness.parts(status("5:0,6:0,7:0,8:0,10:0,11:0"), kept, bagsFresh = true, fresh = setOf("TP1|", "TQ1|", "TM1|")) { true }!!
+        val byTitle = parts.associateBy { it.title }
+        assertEquals(Readiness.Status.READY, byTitle["Character and gear"]!!.status)
+        assertEquals(Readiness.Status.READY, byTitle["Map"]!!.status)
+        assertEquals(Readiness.Status.MISSING, byTitle["Quests"]!!.status)
+    }
+
+    @Test
     fun missingAndChangedParts() {
         val kept = mapOf("TP1|" to tp, "TQ1|" to "TQ1|old", "TL1|" to tl, "TB1|" to tb)
         val parts = Readiness.parts(status(all().replace(Regex("10:\\d+"), "10:0")), kept, bagsFresh = true) { it == 100 }!!

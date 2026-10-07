@@ -215,6 +215,57 @@ class MainActivity : Activity() {
         worker = Thread(::loop, "strip-reader").apply { isDaemon = true; start() }
     }
 
+    /** Where you told the app your Thor-Forever folder is, or null to look for it. */
+    private fun kitPath() = getPreferences(MODE_PRIVATE).getString("kitPath", null)
+
+    /** True when no Thor-Forever folder was found: then a card asks you to choose it. */
+    @Volatile private var kitMissing = false
+
+    /** Puts the bundled addon into the Thor-Forever folder (root, so off the UI thread). */
+    private fun installAddon() {
+        val outcome = AddonInstaller.install(this, kitPath())
+        kitMissing = outcome.missing
+        runOnUiThread {
+            if (outcome.note.isNotEmpty()) say(outcome.note, notice = true)
+            render()
+        }
+    }
+
+    /** Opens Android's folder picker for the Thor-Forever folder. */
+    private fun chooseKit() {
+        val intent = android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT_TREE)
+        runCatching { startActivityForResult(intent, CHOOSE_KIT) }
+            .onFailure { say("Couldn't open the folder picker: ${it.message}") }
+    }
+
+    @Deprecated("The plain Activity's way; this app has no AndroidX.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != CHOOSE_KIT || resultCode != RESULT_OK) return
+        val path = data?.data?.let { AddonInstaller.pathOf(it) }
+            // The AddOns folder itself chosen: the Thor-Forever folder is the one around it.
+            ?.let { if (it.endsWith("/AddOns")) it.removeSuffix("/AddOns") else it }
+        if (path == null) {
+            say("That folder isn't on the Thor's storage: choose the Thor-Forever folder there.", notice = true)
+            return
+        }
+        getPreferences(MODE_PRIVATE).edit().putString("kitPath", path).apply()
+        say("Putting the addon into $path…", notice = true)
+        keys.execute { installAddon() }
+    }
+
+    /** The card that asks for the Thor-Forever folder when the app couldn't find it. */
+    private fun kitCard(): View {
+        val box = card().apply { background = Theme.box(context, SURFACE, 14, ACCENT) }
+        box.addView(line("Where is your Thor-Forever folder?", TEXT, 16f, bold = true).apply { setPadding(0, 0, 0, 0) })
+        box.addView(line("The app puts its addon into that folder's AddOns, and Thor Forever copies it into the game " +
+            "when it starts. Choose the folder with Thor-Forever.exe in it; the app remembers it.", DIM, 13f))
+        box.addView(chip("Choose folder") { chooseKit() }.apply {
+            background = Theme.box(context, ACCENT, 18); setTextColor(Color.BLACK)
+        }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+        return box
+    }
+
     override fun onStop() {
         closeCompose()
         worker = null
@@ -340,8 +391,7 @@ class MainActivity : Activity() {
         // The addon that came with this app goes into the game (once per start of the app).
         if (!addonChecked) {
             addonChecked = true
-            val outcome = AddonInstaller.install(this)
-            if (outcome.note.isNotEmpty()) runOnUiThread { say(outcome.note, notice = true) }
+            installAddon()
         }
         var misses = 0
         var seenSquare = false
@@ -671,6 +721,7 @@ class MainActivity : Activity() {
         updateLoadButton()
         updateBadges()
         val s = state
+        if (kitMissing) content.addView(kitCard(), cardParams())
         if (!ready && renderLoading()) return
         if (s == null) {
             content.addView(empty("Waiting for the game…", "Open WoW Forever with the Forever Companion addon on. If it is already open, tap Load from the game."))
@@ -1951,6 +2002,8 @@ class MainActivity : Activity() {
         const val NOTICE_MS = 6000L
         /** After this long on the start-up card, it offers to ask the game for everything, or to open anyway. */
         const val SLOW_MS = 15_000L
+        /** The request code of the folder picker for the Thor-Forever folder. */
+        const val CHOOSE_KIT = 41
         val KEPT = setOf("TS1|", "TB1|", "TM1|", "TP1|", "TQ1|", "TL1|", "TV1|")
         /** The paper doll's slots, left column then right, as Character.lua sends them. */
         val GEAR_SLOTS = listOf(1, 2, 3, 15, 5, 4, 19, 9, 10, 6, 7, 8, 11, 12, 13, 14, 16, 17)

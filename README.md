@@ -67,7 +67,8 @@ later on will be one key press per tap.
    that version into the AddOns folder of each Thor-Forever folder it finds in shared
    storage (one with Thor-Forever.exe and installer/launch-game.sh, Download/Thor-Forever
    by default; when it holds another version); the launcher copies it into the game at
-   the next start.
+   the next start. When it finds none, a card asks you to choose the folder (Android's
+   folder picker); the app remembers it and installs only there from then on.
    While the square isn't on the screen (the game starting, the character screen, a
    loading screen) the app reads the game's screen only every 10 seconds (30 seconds
    right after the square went away, then every 5): screenshots taken while the game

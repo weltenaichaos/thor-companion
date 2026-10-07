@@ -24,8 +24,26 @@ object AddonInstaller {
     private const val DEPTH = 7
     private val STORAGE = listOf("/sdcard", "/storage/emulated/0", "/mnt/user/0/emulated/0", "/data/media/0")
 
-    /** What came of [install]: [installed] when the folder got this version, else why not. */
-    data class Outcome(val installed: Boolean, val note: String)
+    /**
+     * What came of [install]: [installed] when a folder got this version, else why not
+     * ([note], empty when nothing needed doing). [missing] when no Thor-Forever folder
+     * was found (or the chosen one is gone): then the app asks you to choose it.
+     */
+    data class Outcome(val installed: Boolean, val note: String, val missing: Boolean = false)
+
+    /**
+     * The folder a storage-picker tree URI stands for, as a path ("primary:Games/Thor-Forever"
+     * is /storage/emulated/0/Games/Thor-Forever, another volume's "1234-ABCD:x" is
+     * /storage/1234-ABCD/x); null for one that isn't on local storage.
+     */
+    fun pathOf(tree: android.net.Uri): String? {
+        if (tree.authority != "com.android.externalstorage.documents") return null
+        val id = runCatching { android.provider.DocumentsContract.getTreeDocumentId(tree) }.getOrNull() ?: return null
+        val volume = id.substringBefore(':')
+        val rest = id.substringAfter(':', "").trim('/')
+        val root = if (volume == "primary") "/storage/emulated/0" else "/storage/$volume"
+        return if (rest.isEmpty()) root else "$root/$rest"
+    }
 
     /** The bundled addon's version, from its .toc. */
     fun version(context: Context): String? = runCatching {
@@ -34,8 +52,11 @@ object AddonInstaller {
         }
     }.getOrNull()
 
-    /** Installs where needed (root, so call off the UI thread). */
-    fun install(context: Context): Outcome {
+    /**
+     * Installs where needed (root, so call off the UI thread): into [chosen] when you
+     * picked the Thor-Forever folder, else into each one found in shared storage.
+     */
+    fun install(context: Context, chosen: String? = null): Outcome {
         val version = version(context) ?: return Outcome(false, "the app has no addon in it")
         val dir = File(context.cacheDir, "addon/$NAME").apply { deleteRecursively(); mkdirs() }
         val files = context.assets.list(NAME).orEmpty()
@@ -45,9 +66,29 @@ object AddonInstaller {
         val script = File(context.cacheDir, "addon/install.sh")
         val out = File(context.cacheDir, "addon/result.txt").apply { delete() }
         val uid = android.os.Process.myUid()
-        // The first name for shared storage under which a Thor-Forever kit shows up; each kit there.
-        // One line per kit: "installed <kit>", "same <kit>" or "failed <kit>"; "missing" when there is none.
-        script.writeText("""
+        // One line per folder: "installed <kit>", "same <kit>" or "failed <kit>"; "missing" when there is none.
+        val put = """
+            put() {
+              T="${'$'}1"; S="${'$'}2"
+              D="${'$'}T/AddOns/$NAME"
+              if grep -qx ${q("## Version: $version")} "${'$'}D/$NAME.toc" 2>/dev/null; then echo "same ${'$'}T"; return; fi
+              mkdir -p "${'$'}D" && cp -f ${q(dir.absolutePath)}/* "${'$'}D/" || { echo "failed ${'$'}T"; return; }
+              # Written straight into the storage's own folder: same owner as the folder around it.
+              case "${'$'}S" in /data/*) chown -R "${'$'}(stat -c %u:%g "${'$'}T")" "${'$'}T/AddOns" ;; esac
+              grep -qx ${q("## Version: $version")} "${'$'}D/$NAME.toc" && echo "installed ${'$'}T" || echo "failed ${'$'}T"
+            }
+        """.trimIndent()
+        val body = if (chosen != null) {
+            // The folder you chose, under each name the root service may know shared storage by.
+            val root = STORAGE.plus("/storage/emulated/0").firstOrNull { chosen == it || chosen.startsWith("$it/") }
+            val rest = root?.let { chosen.removePrefix(it).trimStart('/') }
+            val candidates = if (rest != null) STORAGE.map { (if (rest.isEmpty()) it else "$it/$rest") to it } else listOf(chosen to chosen)
+            candidates.joinToString("\n") { (c, storage) ->
+                "[ -d ${q(c)} ] && { put ${q(c)} ${q(storage)}; exit 0; }"
+            } + "\necho missing"
+        } else {
+            // The first name for shared storage under which a Thor-Forever folder shows up; each one there.
+            """
             for S in ${STORAGE.joinToString(" ")}; do
               [ -d "${'$'}S" ] || continue
               found=0
@@ -56,25 +97,16 @@ object AddonInstaller {
                 T="${'$'}{L%/installer/launch-game.sh}"
                 [ -f "${'$'}T/Thor-Forever.exe" ] || continue
                 found=1
-                D="${'$'}T/AddOns/$NAME"
-                if grep -qx ${q("## Version: $version")} "${'$'}D/$NAME.toc" 2>/dev/null; then echo "same ${'$'}T"; continue; fi
-                mkdir -p "${'$'}D" && cp -f ${q(dir.absolutePath)}/* "${'$'}D/" || { echo "failed ${'$'}T"; continue; }
-                # Written straight into the storage's own folder: same owner as the folder around it.
-                case "${'$'}S" in /data/*) chown -R "${'$'}(stat -c %u:%g "${'$'}T")" "${'$'}T/AddOns" ;; esac
-                grep -qx ${q("## Version: $version")} "${'$'}D/$NAME.toc" && echo "installed ${'$'}T" || echo "failed ${'$'}T"
+                put "${'$'}T" "${'$'}S"
               done
-              # The kit of older versions of Thor Forever, before it could live anywhere.
-              if [ ${'$'}found = 0 ] && [ -d "${'$'}S/$KIT" ]; then
-                T="${'$'}S/$KIT"; found=1
-                D="${'$'}T/AddOns/$NAME"
-                if grep -qx ${q("## Version: $version")} "${'$'}D/$NAME.toc" 2>/dev/null; then echo "same ${'$'}T"
-                elif mkdir -p "${'$'}D" && cp -f ${q(dir.absolutePath)}/* "${'$'}D/" && grep -qx ${q("## Version: $version")} "${'$'}D/$NAME.toc"; then echo "installed ${'$'}T"
-                else echo "failed ${'$'}T"; fi
-              fi
+              # Where older versions of Thor Forever had it, before it could live anywhere.
+              if [ ${'$'}found = 0 ] && [ -d "${'$'}S/$KIT" ]; then found=1; put "${'$'}S/$KIT" "${'$'}S"; fi
               [ ${'$'}found = 1 ] && exit 0
             done
             echo "missing"
-        """.trimIndent() + "\n")
+            """.trimIndent()
+        }
+        script.writeText(put + "\n" + body + "\n")
         RootShell.exec("sh ${q(script.absolutePath)} > ${q(out.absolutePath)} 2>&1; chown $uid:$uid ${q(out.absolutePath)}")
             ?: return Outcome(false, "the Thor's root service isn't reachable")
         val lines = runCatching { out.readText().trim().lines().filter { it.isNotBlank() } }.getOrDefault(emptyList())
@@ -88,7 +120,9 @@ object AddonInstaller {
             failed.isNotEmpty() -> Outcome(installed.isNotEmpty(), "Couldn't put the addon $version into ${failed.joinToString(" and ")}.")
             installed.isNotEmpty() -> Outcome(true, "Put the Forever Companion addon $version into ${installed.joinToString(" and ")}; the game gets it at its next start.")
             lines.any { it.startsWith("same ") } -> Outcome(false, "")
-            lines.lastOrNull() == "missing" -> Outcome(false, "Couldn't find the Thor-Forever folder (with Thor-Forever.exe in it), so the addon $version wasn't put there.")
+            lines.lastOrNull() == "missing" -> Outcome(false,
+                if (chosen != null) "The Thor-Forever folder you chose isn't there any more: choose it again so the addon $version gets into the game."
+                else "Couldn't find your Thor-Forever folder: choose it so the addon $version gets into the game.", missing = true)
             else -> Outcome(false, "Couldn't put the addon $version into the Thor-Forever folder (${lines.lastOrNull() ?: "no answer"}).")
         }
     }

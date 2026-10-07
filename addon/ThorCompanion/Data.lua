@@ -131,7 +131,6 @@ end
 -- next refresh, so the square stays still unless something changes.
 local SENDS = 2
 local REFRESH_TICKS = 600       -- five minutes: state and bags again, for an app started late
-local NAMES_REFRESH_TICKS = 600  -- five minutes: names again, for an app that was reinstalled
 local MAP_REFRESH_TICKS = 120   -- one minute: the map again, so a restarted app is soon up to date
 local MOVE_SECONDS = 0.5         -- while walking, the position is sent at most this often
 local STATUS_AGAIN = 10          -- the status again after this long even when nothing changed, so an app started later soon has it
@@ -307,14 +306,13 @@ bagEvents:RegisterEvent("BAG_UPDATE_DELAYED")
 bagEvents:SetScript("OnEvent", function() bagsUrgent = true end)
 
 local showingTurn
--- The chat waits until everything else has gone out once after a login: in a
--- city the channels alone could keep the square busy while the app gets ready.
-local function chatNow() return caughtUp or GetTime() > caughtUpBy end
-
 -- After a loading screen the item names (several long pages for full bags) wait
 -- until every other kind has had its turn once: the app's start-up card waits for
 -- the map, quests and spells, not for the names.
 local namesWait = true
+
+-- The chat waits only for what the start-up card waits for (the turns up to the spells).
+local function chatNow() return caughtUp or not namesWait or GetTime() > caughtUpBy end
 
 local function nextMessage()
     local id = C_Map.GetBestMapForUnit("player")
@@ -343,6 +341,8 @@ local function nextMessage()
         mapForce = mapUrgent
     elseif lastSent[8] and ns.QuestPagesPending() then
         turn = 10  -- the rest of the quest log (11) right after its first page
+    elseif showingTurn ~= 4 and chatNow() and ns.ChatPending() then
+        turn = 3  -- lines waiting in a busy chat: every other message is the chat
     end
     mapUrgent = false
     for _ = 1, #kinds do
@@ -443,7 +443,6 @@ f:SetScript("OnEvent", function()
         if loading or GetTime() < quietUntil then return end
         ticks = ticks + 1
         if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain, known = {}, true, {} ns.QuestPagesAgain() end
-        if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
         if ticks % MAP_REFRESH_TICKS == 0 then lastSent[5], known[5] = nil, nil end
         -- What came of a tap goes out at once; whatever it cut short is sent again.
         local okOpen, opened = pcall(ns.ChatOpenPayload)
@@ -473,8 +472,9 @@ f:SetScript("OnEvent", function()
             return
         end
         if ns.StripBusy() then return end
-        -- What the app has no picture of yet comes up by itself, one at a time.
-        if caughtUp and GetTime() > picturesAfter or GetTime() > caughtUpBy + 5 then
+        -- What the app has no picture of yet comes up by itself, one at a time (not while
+        -- chat lines wait: each picture holds the square for seconds).
+        if (caughtUp and GetTime() > picturesAfter or GetTime() > caughtUpBy + 5) and not ns.ChatPending() then
             local okAuto, shown = pcall(ns.MapPictureAuto)
             if okAuto and shown then return end
             okAuto, shown = pcall(ns.IconsAuto)

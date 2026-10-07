@@ -265,6 +265,14 @@ function ns.ChatPayload(again, peek)
     return head .. "\n" .. table.concat(out, "\n")
 end
 
+-- Whether there are lines the app hasn't been sent yet.
+function ns.ChatPending()
+    for _, l in ipairs(lines) do
+        if (sends[l[1]] or 0) < (l[2] == "channel" and 1 or SENDS) then return true end
+    end
+    return false
+end
+
 -- For /thor chat channels on|off.
 function ns.ChatChannels(on)
     ThorCompanionDB.chatChannels = on

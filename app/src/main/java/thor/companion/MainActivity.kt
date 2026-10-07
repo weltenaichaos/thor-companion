@@ -799,7 +799,11 @@ class MainActivity : Activity() {
         ready = true
         switchedFrom = null
         scroll.removeCallbacks(loadingTick)
-        if (state?.freeSlots != null) say("Everything is loaded", notice = true)
+        val s = state
+        if (s?.freeSlots != null) {
+            val unnamed = s.items.map { it.itemId }.distinct().count { names[it] == null }
+            say(if (unnamed > 0) "Ready; $unnamed item names are still coming in" else "Everything is loaded", notice = true)
+        }
     }
 
     /** Draws the start-up card in place of the tab; false once there is nothing to wait for (then the tab is drawn). */

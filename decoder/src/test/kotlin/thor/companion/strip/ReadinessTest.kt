@@ -27,6 +27,14 @@ class ReadinessTest {
     }
 
     @Test
+    fun itemNamesDoNotHoldTheCard() {
+        val kept = mapOf("TP1|" to tp, "TQ1|" to tq, "TM1|" to tm, "TL1|" to tl, "TL2|2" to tl2, "TV1|" to tv, "TB1|" to tb)
+        val parts = Readiness.parts(status(all()), kept, bagsFresh = true) { false }!!
+        assertEquals(Readiness.Status.LOADING, parts.first { it.title == "Item names" }.status)
+        assertTrue(Readiness.done(parts), parts.toString())
+    }
+
+    @Test
     fun missingAndChangedParts() {
         val kept = mapOf("TP1|" to tp, "TQ1|" to "TQ1|old", "TL1|" to tl, "TB1|" to tb)
         val parts = Readiness.parts(status(all().replace(Regex("10:\\d+"), "10:0")), kept, bagsFresh = true) { it == 100 }!!

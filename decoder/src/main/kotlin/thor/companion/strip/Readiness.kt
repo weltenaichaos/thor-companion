@@ -8,7 +8,8 @@ package thor.companion.strip
 object Readiness {
     enum class Status { READY, LOADING, MISSING }
 
-    data class Part(val title: String, val status: Status, val detail: String = "")
+    /** [needed]: the card waits for it; item names fill in while you already use the tabs. */
+    data class Part(val title: String, val status: Status, val detail: String = "", val needed: Boolean = true)
 
     /**
      * The parts, from [state] (the latest TS1 and bags), the messages the app has by
@@ -57,7 +58,7 @@ object Readiness {
         parts += Part("Item names", names, when (names) {
             Status.MISSING -> "after the bags"
             else -> "$named of ${ids.size}"
-        })
+        }, needed = false)
 
         val mapSame = same("TM1|", 5)
         val zone = kept["TM1|"]?.let { ZoneMap.parse(it) }?.zone.orEmpty()
@@ -87,6 +88,6 @@ object Readiness {
         return parts
     }
 
-    /** True when every part is there. */
-    fun done(parts: List<Part>) = parts.all { it.status == Status.READY }
+    /** True when every part the card waits for is there. */
+    fun done(parts: List<Part>) = parts.all { it.status == Status.READY || !it.needed }
 }

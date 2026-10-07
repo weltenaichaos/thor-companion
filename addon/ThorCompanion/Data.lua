@@ -145,8 +145,13 @@ local function namesPayload(peek)
     local all = {}
     for _, id in ipairs(bagIDs) do all[#all + 1] = id end
     for _, id in ipairs(ns.EquippedIDs()) do all[#all + 1] = id end
+    -- Every name once before any goes the second time, so all are in soon after a login.
+    local limit = SENDS
     for _, id in ipairs(all) do
-        if (sentCount[id] or 0) < SENDS then
+        if (sentCount[id] or 0) == 0 then limit = 1 break end
+    end
+    for _, id in ipairs(all) do
+        if (sentCount[id] or 0) < limit then
             local entry = itemEntry(id)
             if entry then
                 if used + #entry + 1 > room then break end
@@ -288,6 +293,11 @@ local chatUrgent = false
 -- After a loading screen (a login above all) the status goes first: it says which
 -- character this is, and the app keeps nothing else until it knows.
 local statusUrgent = true
+-- Until everything has gone out once after a login (or a Load from the game), the
+-- zone pictures and item icons wait: they hold the square for seconds each.
+local caughtUp, caughtUpBy = false, 0
+local CATCH_UP_SECONDS = 60
+local statusHold
 function ns.ChatUrgent() chatUrgent = true end
 local bagEvents = CreateFrame("Frame")
 bagEvents:RegisterEvent("BAG_UPDATE_DELAYED")
@@ -300,6 +310,8 @@ local function nextMessage()
         turn = 0  -- the status (1) is next, sent even when it is the same as before
         statusAt = -STATUS_AGAIN - 1
         statusUrgent = false
+        statusHold = 1.5  -- long enough for an app that looks once a second
+        bagsUrgent = true -- and the bags right after it
     elseif chatUrgent then
         turn = 3  -- the chat (4) is next
         chatUrgent = false
@@ -331,6 +343,7 @@ local function nextMessage()
             return encode(turn, p)
         end
     end
+    caughtUp = true
     -- Nothing changed: time for the item tooltips the app hasn't got yet.
     local ok, tips = pcall(ns.TooltipsPayload)
     if ok and tips then
@@ -343,6 +356,7 @@ end
 -- reinstalled (its Refresh button presses ALT-SHIFT-F12).
 function ns.SendAllAgain()
     lastSent, chatAgain, sentCount, known = {}, true, {}, {}
+    caughtUp, caughtUpBy = false, GetTime() + CATCH_UP_SECONDS
     ns.TooltipsAgain()
     ns.QuestPagesAgain()
 end
@@ -394,6 +408,7 @@ f:RegisterEvent("PLAYER_LOGIN")
 f:SetScript("OnEvent", function()
     ThorCompanionDB = ThorCompanionDB or {}
     ns.StripShow(ThorCompanionDB.hidden ~= true)
+    caughtUpBy = GetTime() + CATCH_UP_SECONDS
     ticker = C_Timer.NewTicker(0.5, function()
         -- Nothing while a loading screen is up, and for a moment after: the game is
         -- busy setting up the zone then, and asking it things is better left alone.
@@ -431,12 +446,15 @@ f:SetScript("OnEvent", function()
         end
         if ns.StripBusy() then return end
         -- What the app has no picture of yet comes up by itself, one at a time.
-        local okAuto, shown = pcall(ns.MapPictureAuto)
-        if okAuto and shown then return end
-        okAuto, shown = pcall(ns.IconsAuto)
-        if okAuto and shown then return end
+        if caughtUp or GetTime() > caughtUpBy then
+            local okAuto, shown = pcall(ns.MapPictureAuto)
+            if okAuto and shown then return end
+            okAuto, shown = pcall(ns.IconsAuto)
+            if okAuto and shown then return end
+        end
+        statusHold = nil
         local p = nextMessage()
-        if p then ns.StripWrite(p) end
+        if p then ns.StripWrite(p, statusHold) end
     end)
 end)
 

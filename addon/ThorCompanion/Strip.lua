@@ -168,12 +168,14 @@ end
 -- The status (your position) may go sooner: a newer one replaces it anyway.
 local STATUS_SECONDS = 0.5
 
+local holdFor
 function ns.StripBusy()
-    local hold = message and message:sub(1, 4) == "TS1|" and STATUS_SECONDS or MIN_SECONDS
+    local hold = holdFor or (message and message:sub(1, 4) == "TS1|" and STATUS_SECONDS or MIN_SECONDS)
     return GetTime() - shownAt < hold or (#parts > 1 and rounds > 0)
 end
 
-function ns.StripWrite(payload)
+-- hold: how long the message stays at least (default: see StripBusy).
+function ns.StripWrite(payload, hold)
     if not cells then build() end
     if #payload > ns.StripCapacity() then payload = payload:sub(1, ns.StripCapacity()) end
     if payload == message then return end
@@ -184,7 +186,7 @@ function ns.StripWrite(payload)
         parts[p] = payload:sub((p - 1) * PART_BYTES + 1, p * PART_BYTES)
     end
     part, rounds = 1, ROUNDS
-    shownAt = GetTime()
+    shownAt, holdFor = GetTime(), hold
     draw(1)
     if #parts > 1 and not stepper then stepper = C_Timer.NewTicker(STEP_SECONDS, step) end
 end

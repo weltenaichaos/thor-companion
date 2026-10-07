@@ -2074,7 +2074,7 @@ class MainActivity : Activity() {
         /** After this long on the start-up card, it offers to ask the game for everything, or to open anyway. */
         const val SLOW_MS = 15_000L
         /** No new message for this long: the game is gone (it sends its status at least every 10 s). */
-        const val STALE_MS = 25_000L
+        const val STALE_MS = 30_000L
         /** The start-up card's rows before the status says what there is. */
         val PLACEHOLDER = listOf("Character and gear", "Bags", "Item names", "Map", "Quests", "Spells to learn")
         /** The request code of the folder picker for the Thor-Forever folder. */

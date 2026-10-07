@@ -178,7 +178,9 @@ end
 function ns.StripWrite(payload, hold)
     if not cells then build() end
     if #payload > ns.StripCapacity() then payload = payload:sub(1, ns.StripCapacity()) end
-    if payload == message then return end
+    -- The same message again is left as it is, except the status: it goes out again
+    -- now and then (with a new number) so the app knows the game is still there.
+    if payload == message and payload:sub(1, 4) ~= "TS1|" then return end
     message = payload
     msgSeq = (msgSeq + 1) % 256
     parts = {}

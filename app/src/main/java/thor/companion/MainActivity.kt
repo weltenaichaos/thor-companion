@@ -544,7 +544,6 @@ class MainActivity : Activity() {
             val socket = KeySender.open(this)
             if (socket == null) { game = Game.UNKNOWN; SystemClock.sleep(30_000); continue }
             watchSocket = socket
-            watchCount++
             try {
                 val folder = getPreferences(MODE_PRIVATE).getString("gameFolder", null).orEmpty()
                 socket.outputStream.write("W $folder\n".toByteArray())
@@ -560,38 +559,6 @@ class MainActivity : Activity() {
             if (watcher === Thread.currentThread()) SystemClock.sleep(5000)
         }
     }
-
-    /** A line of the game's chat log file: the public channels come from there (see [ChatFile]). */
-    private fun onChatFile(raw: String, history: Boolean = false) {
-        if (!history) ChatFile.saidAt(raw)?.let { logLate = System.currentTimeMillis() - it }
-        val line = ChatFile.parse(raw) ?: return
-        // The game writes its log a few kilobytes at a time: fine for the busy public
-        // channels, too late for your group, guild and whispers, which still come from the square.
-        if (line.kind != "channel") return
-        if (!history) chatFromFile++
-        runOnUiThread {
-            chat.add(line)
-            // A busy city chat brings many lines a second: the screen is redrawn once for all of them.
-            if (!chatRedraw) {
-                chatRedraw = true
-                window.decorView.postDelayed({
-                    chatRedraw = false
-                    if (panel == Panel.CHAT) render() else updateBadges()
-                }, 400)
-            }
-        }
-    }
-    private var chatRedraw = false
-    /** For the chat log check line under the chat. */
-    @Volatile private var logGrewAt = 0L
-    @Volatile private var logGrew = 0
-    @Volatile private var logByEvent = 0
-    @Volatile private var logByLook = 0
-    @Volatile private var logLate = -1L
-    /** Chat lines that came from the log as they were said, since the app started. */
-    @Volatile private var chatFromFile = 0
-    /** How many times the helper was asked to follow the game since the app started. */
-    @Volatile private var watchCount = 0
 
     private fun onGameEvent(line: String) {
         val what = line.take(1)
@@ -622,15 +589,8 @@ class MainActivity : Activity() {
             }
             "O" -> if (game == Game.IN_WORLD || game == Game.LOADING || game == Game.UNKNOWN) game = Game.OUT
             "X" -> game = Game.CLOSED
-            "C" -> { onChatFile(arg); return }
-            "D" -> {
-                // The chat log check line: when the file grew, by how much, and who noticed.
-                logGrewAt = now; logGrew = arg.substringBefore(' ').toIntOrNull() ?: 0
-                when (arg.substringAfter(' ')) { "e" -> logByEvent++; "p" -> logByLook++ }
-                return
-            }
-            // The chat from just before (the app started late): only into a chat still empty.
-            "H" -> { if (chatFromFile == 0 && watchCount == 1) onChatFile(arg, history = true); return }
+            // Chat log lines: the game writes that file only every few minutes, so the chat comes from the square.
+            "C", "D", "H" -> return
             else -> return
         }
         gameAt = now
@@ -1320,12 +1280,6 @@ class MainActivity : Activity() {
             content.addView(box, cardParams())
             scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
         }
-        // A check while Trade and General come from the game's chat log (for now).
-        val check = if (logGrewAt == 0L) "Chat log: nothing written yet since the app started" else
-            "Chat log: last grew %d s ago (%.1f KB) · noticed by event %d, by look %d · newest line %s".format(
-                (SystemClock.uptimeMillis() - logGrewAt) / 1000, logGrew / 1024f, logByEvent, logByLook,
-                if (logLate < 0) "?" else "%.1f s after it was said".format(logLate / 1000f))
-        content.addView(line(check, DIM, 12f))
 
         if (composing != null) return
         // Answer: type here, with the keyboard on this screen; Send opens the game's chat box and puts it in.

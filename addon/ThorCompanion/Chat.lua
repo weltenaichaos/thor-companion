@@ -1,7 +1,6 @@
 -- Chat.lua
 -- Keeps the recent chat lines so the app's Chat tab can show them. Sent as
 --   TH1|<session><tab><whisper names><tab><channels><newline><id><tab><kind><tab><sender><tab><channel><tab><text><newline>...
--- (no lines at all while the game's chat log is on: the app reads them from the file)
 -- with only the lines the app has not been sent yet (after a refresh, the last
 -- few again). <session> changes with every login or /reload, so the app knows
 -- when the line numbers start over. <sender> is Name-Realm as the game gives it.
@@ -154,19 +153,16 @@ chatOwner:RegisterEvent("PLAYER_REGEN_ENABLED")
 chatOwner:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_LOGIN" then
         hookEditBoxes()
-        -- The game's own chat log (Logs/WoWChatLog.txt, like /chatlog): the app can read
-        -- the chat from the file instead of the square.
-        pcall(function() if not LoggingChat() then LoggingChat(true) end end)
+        -- 0.20.1 to 0.21.5 switched on the game's chat log (Logs/WoWChatLog.txt) for the
+        -- app to read; the game writes it only every few minutes, so the chat is back on
+        -- the square. Switched off again, once (a /chatlog of your own after that stays).
+        if ThorCompanionDB and not ThorCompanionDB.chatLogOff then
+            pcall(LoggingChat, false)
+            ThorCompanionDB.chatLogOff = true
+        end
     end
     if event == "PLAYER_LOGIN" or chatPending then ns.BindWhispers() end
 end)
-
--- With the game's chat log on, the app reads the public channels from that file:
--- the square then carries the head (whisper names, channels) and the other lines.
-local function fileChat()
-    local ok, on = pcall(LoggingChat)
-    return ok and on
-end
 
 local function add(kind, sender, channel, text)
     if kind == "channel" and ThorCompanionDB and ThorCompanionDB.chatChannels == false then return end
@@ -246,20 +242,15 @@ function ns.ChatPayload(again, peek)
         used = used + #entry + 1
         return true
     end
-    -- With the game's chat log on, the public channels come from that file (the game
-    -- writes it a few kilobytes at a time: fine for a busy Trade, too slow for a
-    -- whisper), the rest still from here.
-    local file = fileChat()
     if again then
         for _, l in ipairs(lines) do
-            if l[1] >= nextId - RESEND and not (file and l[2] == "channel") then take(l) end
+            if l[1] >= nextId - RESEND then take(l) end
         end
     else
         for _, l in ipairs(lines) do
             if l[2] ~= "channel" and (sends[l[1]] or 0) < SENDS and not take(l) then break end
         end
         for _, l in ipairs(lines) do
-            if file then break end
             if l[2] == "channel" and (sends[l[1]] or 0) < 1 and not take(l) then break end
         end
     end

@@ -134,6 +134,7 @@ local REFRESH_TICKS = 600       -- five minutes: state and bags again, for an ap
 local NAMES_REFRESH_TICKS = 600  -- five minutes: names again, for an app that was reinstalled
 local MAP_REFRESH_TICKS = 120   -- one minute: the map again, so a restarted app is soon up to date
 local MOVE_SECONDS = 0.5         -- while walking, the position is sent at most this often
+local STATUS_AGAIN = 10          -- the status again after this long even when nothing changed, so an app started later soon has it
 local sentCount = {}
 
 -- The next page of names that still need sending, or nil when there are none.
@@ -314,7 +315,7 @@ local function nextMessage()
         end
         -- The chat and the quest pages say themselves when they have something to send
         -- (each goes out twice, and the second time can look just like the first).
-        if p and (p ~= lastSent[turn] or turn == 4 or turn == 11) then
+        if p and (p ~= lastSent[turn] or turn == 4 or turn == 11 or (turn == 1 and GetTime() - statusAt > STATUS_AGAIN)) then
             if turn == 1 then statusAt = GetTime() end
             if turn == 5 then mapAt, mapID = GetTime(), p:match("^TM1|(%d+)") end
             lastSent[turn] = p

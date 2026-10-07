@@ -421,6 +421,7 @@ class MainActivity : Activity() {
                     val name = message.split('|').getOrNull(1)
                     if (name != null && name != "error" && name != "?" && name != keptFor) switchCharacter(name)
                 }
+                if (message != null && seenAt == 0L) seenAt = SystemClock.uptimeMillis()
                 if (message != null) remember(message)
                 when {
                     message == null -> {}
@@ -744,6 +745,8 @@ class MainActivity : Activity() {
     @Volatile private var ready = false
     /** Whether a status came from the game since the app started (kept data alone counts for nothing). */
     private var live = false
+    /** When the first message of any kind came from the game since the app started (0 before). */
+    @Volatile private var seenAt = 0L
     private var liveSession: String? = null
     private var loadingSince = 0L
     /** The character whose data was put away for the one now logged in, for the card's first line. */
@@ -776,11 +779,17 @@ class MainActivity : Activity() {
         scroll.removeCallbacks(loadingTick)
         scroll.postDelayed(loadingTick, 1000)
         val box = card().apply { background = Theme.box(context, SURFACE, 14, ACCENT); setPadding(dp(18), dp(16), dp(18), dp(16)) }
+        val seen = seenAt != 0L
         val who = s?.name?.takeIf { live && it != "?" }
-        box.addView(line(if (who != null) "Getting $who ready" else "Looking for the game…", TEXT, 18f, bold = true).apply { setPadding(0, 0, 0, 0) })
+        box.addView(line(when {
+            who != null -> "Getting $who ready"
+            seen -> "Getting ready"
+            else -> "Looking for the game…"
+        }, TEXT, 18f, bold = true).apply { setPadding(0, 0, 0, 0) })
         val c = character
         val sub = when {
-            !live -> "Open WoW Forever with the Forever Companion addon on."
+            !seen -> "Open WoW Forever with the Forever Companion addon on."
+            !live -> "Found the game; waiting for its status (it comes every few seconds)."
             switchedFrom != null -> "Switched character: $switchedFrom's data was put away"
             else -> listOfNotNull(s?.level?.let { "Level $it" }, c?.race, c?.className).joinToString(" ").let { l ->
                 listOf(l, zoneMap?.zone.orEmpty()).filter { it.isNotEmpty() }.joinToString("  ·  ")
@@ -812,11 +821,11 @@ class MainActivity : Activity() {
             val done = parts.count { it.status == Readiness.Status.READY }
             box.addView(Bar(this).apply { value = done.toFloat() / parts.size; colour = ACCENT }, LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(12) })
         }
-        val waited = SystemClock.uptimeMillis() - loadingSince
-        val slow = live && waited > SLOW_MS
+        val waited = SystemClock.uptimeMillis() - (if (live) loadingSince else seenAt)
+        val slow = seen && waited > SLOW_MS
         box.addView(line(
             if (slow) "The game sends what changed by itself. For the rest, one tap asks it for everything."
-            else if (live) "The tabs open as soon as everything is in. Nothing can be tapped before that, so no tap goes to an old bag slot."
+            else if (seen) "The tabs open as soon as everything is in. Nothing can be tapped before that, so no tap goes to an old bag slot."
             else "Already open? Then the data square may be hidden (/thor), or the app reads the other screen (hold the dot).",
             DIM, 12.5f).apply { setPadding(0, dp(12), 0, 0) })
         if (slow) {

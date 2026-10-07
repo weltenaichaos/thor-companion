@@ -173,10 +173,24 @@ end
 
 -- The next page after the first that the app hasn't had twice since it changed, or nil.
 local sentPage, sentCount = {}, {}
+local pagesSum = 0
+
+-- The checksum (as TS1's) over the pages after the first, one after another, as last
+-- worked out: 0 while there is only one page.
+function ns.QuestPagesSum()
+    return pagesSum
+end
+
 function ns.QuestPagesPayload()
     local _, pages = build()
+    local all = {}
+    for n = 2, #pages do all[#all + 1] = "TL2|" .. n .. "|" .. #pages .. "\n" .. table.concat(pages[n], "\n") end
+    local h = 0
+    local joined = table.concat(all)
+    for i = 1, #joined do h = (h * 31 + joined:byte(i)) % 65536 end
+    pagesSum = h
     for n = 2, #pages do
-        local p = "TL2|" .. n .. "|" .. #pages .. "\n" .. table.concat(pages[n], "\n")
+        local p = all[n - 1]
         if p ~= sentPage[n] then sentPage[n], sentCount[n] = p, 0 end
         if sentCount[n] < 2 then
             sentCount[n] = sentCount[n] + 1

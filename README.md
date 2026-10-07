@@ -64,8 +64,11 @@ later on will be one key press per tap.
    quests update sooner; changed bags go before everything else. The map arrow glides
    between positions instead of jumping.
    **The app installs the addon:** the APK carries the addon, and at start the app puts
-   that version into Thor Forever's Download/Thor-Forever/AddOns folder (when it holds
-   another version); the launcher copies it into the game at the next start.
+   that version into the AddOns folder of each Thor-Forever folder it finds in shared
+   storage (one with Thor-Forever.exe and installer/launch-game.sh, Download/Thor-Forever
+   by default; when it holds another version); the launcher copies it into the game at
+   the next start. When it finds none, a card asks you to choose the folder (Android's
+   folder picker); the app remembers it and installs only there from then on.
    While the square isn't on the screen (the game starting, the character screen, a
    loading screen) the app reads the game's screen only every 10 seconds (30 seconds
    right after the square went away, then every 5): screenshots taken while the game
@@ -80,7 +83,8 @@ calibration shades and a checksum. `addon/ThorCompanion/Strip.lua` describes the
 ## Install
 
 **Addon:** copy `addon/ThorCompanion` into the game's `Interface\AddOns` folder. With
-Thor Forever Reforged, put it in `Download/Thor-Forever/AddOns` and it is copied in
+Thor Forever Reforged, put it in the `AddOns` folder of your Thor-Forever folder
+(`Download/Thor-Forever/AddOns` by default) and it is copied in
 when the game starts. In game:
 
 - `/thor` shows the data being sent (state, bags and the next page of item names).
@@ -123,6 +127,12 @@ when the game starts. In game:
   do (the "blocked from an action only available to the Blizzard UI" popup).
 - The Exit button at the end of the status line closes the app (tap it twice): it saves
   what it shows, ends its key helper and leaves the recent apps.
+- At start, after a /reload and when you log in another character, a start-up card stands
+  in for the tabs until everything they show is there: character and gear, bags, item
+  names, map, quests and spells. TS1's last field has the addon's checksum of the last
+  map, character, gear, quests, spells and quest pages it sent, so data the app kept
+  from before counts at once when it still matches. The app keeps that data per
+  character. After 15 s the card offers "Load from the game" and "Open anyway".
 - ALT-SHIFT-F12 makes the addon send everything again; the app's "Load from the game"
   button presses it (shown while the bags or character haven't arrived, for example right
   after installing the app). The app also keeps the last bags, character and map across

@@ -429,7 +429,6 @@ class MainActivity : Activity() {
                 if (message != null) {
                     if (seenAt == 0L) seenAt = SystemClock.uptimeMillis()
                     messageAt = SystemClock.uptimeMillis()
-                    messageAtUi = messageAt
                     if (game != Game.UNKNOWN && game != Game.IN_WORLD) game = Game.IN_WORLD
                     if (away) { away = false; runOnUiThread { render() } }
                     if (message.startsWith("TS1|") || !awaitStatus) {
@@ -525,11 +524,6 @@ class MainActivity : Activity() {
     @Volatile private var addonsAt = 0L
     @Volatile private var watcher: Thread? = null
     @Volatile private var watchSocket: android.net.LocalSocket? = null
-    /** When the last message came from the square (uptime ms), for the card. */
-    @Volatile private var messageAtUi = 0L
-
-    /** True when a message came from the square after [since] (uptime ms). */
-    private fun seenSince(since: Long) = messageAtUi > since
 
     /** True while the game's files say there is nothing on the top screen to read. */
     private fun blind(): Boolean {
@@ -565,6 +559,44 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * Test of chat from the game's chat log file (instead of the square): how many lines
+     * came, how late after they were said, and the last few as written, shown in the Chat tab.
+     */
+    private val chatFile = ArrayDeque<String>()
+    @Volatile private var chatFileCount = 0
+    @Volatile private var chatFileDelay: Double? = null
+
+    private fun onChatFile(line: String, now: Long) {
+        synchronized(chatFile) {
+            chatFile.addLast(line)
+            while (chatFile.size > 4) chatFile.removeFirst()
+        }
+        chatFileCount++
+        // The line's time of day ("17:31:16.123"); seconds within the hour, so a time zone the game sees differently doesn't matter.
+        Regex("""(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?""").find(line)?.let { m ->
+            val (_, mm, ss, ms) = m.destructured
+            val said = mm.toInt() * 60 + ss.toInt() + (ms.ifEmpty { "0" }.padEnd(3, '0').toInt() / 1000.0)
+            val cal = java.util.Calendar.getInstance().apply { timeInMillis = now }
+            val heard = cal.get(java.util.Calendar.MINUTE) * 60 + cal.get(java.util.Calendar.SECOND) + cal.get(java.util.Calendar.MILLISECOND) / 1000.0
+            chatFileDelay = ((heard - said) % 3600 + 3600) % 3600
+        }
+        runOnUiThread { if (panel == Panel.CHAT && composing == null) render() }
+    }
+
+    /** The test line in the Chat tab: whether lines come from the log file, and how late. */
+    private fun chatFileCard(): View {
+        val box = card().apply { setPadding(dp(12), dp(8), dp(12), dp(8)) }
+        val delay = chatFileDelay
+        box.addView(line(when {
+            chatFileCount == 0 -> "Chat log file: nothing yet"
+            delay == null -> "Chat log file: $chatFileCount lines (no time in them)"
+            else -> String.format(Locale.US, "Chat log file: %d lines, the newest %.1f s after it was said", chatFileCount, delay)
+        }, ACCENT, 13f, bold = true).apply { setPadding(0, 0, 0, 0) })
+        for (l in synchronized(chatFile) { chatFile.toList() }) box.addView(line(l, DIM, 11.5f).apply { setPadding(0, dp(2), 0, 0) })
+        return box
+    }
+
     private fun onGameEvent(line: String) {
         val what = line.take(1)
         val arg = line.drop(2).trim()
@@ -592,6 +624,7 @@ class MainActivity : Activity() {
             }
             "O" -> if (game == Game.IN_WORLD || game == Game.LOADING || game == Game.UNKNOWN) game = Game.OUT
             "X" -> game = Game.CLOSED
+            "C" -> { onChatFile(arg, System.currentTimeMillis()); return }
             else -> return
         }
         gameAt = now
@@ -682,7 +715,8 @@ class MainActivity : Activity() {
                 if (panel == Panel.BAGS) render()
             }
             // A new game session (login or /reload): the start-up card checks everything again.
-            if (liveSession != null && parsed.session != null && parsed.session != liveSession) startLoading()
+            // (Not while the card shows anyway: it would start over what it already shows.)
+            if (liveSession != null && parsed.session != null && parsed.session != liveSession && ready) startLoading()
             if (parsed.session != null) liveSession = parsed.session
             if (!live) { live = true; loadingSince = SystemClock.uptimeMillis() }
             // The path walked is per game session: a new login or /reload starts it afresh.
@@ -954,7 +988,8 @@ class MainActivity : Activity() {
         box.addView(line(when {
             g == Game.CLOSED -> "WoW is closed"
             g == Game.STARTING -> "WoW is starting"
-            g == Game.LOADING && entering != null -> "Getting $entering ready"
+            // From the moment the files say who enters the world until everything is in: one title.
+            (g == Game.LOADING || g == Game.IN_WORLD) && entering != null -> "Getting $entering ready"
             g == Game.OUT && entering != null -> "$entering logged out"
             away -> "Waiting for a character"
             who != null -> "Getting $who ready"
@@ -965,8 +1000,16 @@ class MainActivity : Activity() {
         val sub = when {
             g == Game.CLOSED -> "Start WoW Forever; the app follows it from there."
             g == Game.STARTING -> "Log in and choose a character."
-            g == Game.LOADING && addonsAt == 0L -> "Loading into the world…" + (switchedFrom?.let { " $it's data is put away." } ?: "")
-            g == Game.LOADING && !seenSince(addonsAt) -> "Almost there: the addons are loading."
+            (g == Game.LOADING || g == Game.IN_WORLD) && entering != null -> listOfNotNull(
+                when {
+                    g == Game.LOADING && addonsAt == 0L -> "Loading into the world…"
+                    g == Game.LOADING -> "Almost there: the addons are loading."
+                    !known -> "In the world: the data is coming in."
+                    else -> listOfNotNull(s?.level?.let { "Level $it" }, c?.race, c?.className).joinToString(" ")
+                        .let { l -> listOf(l, zoneMap?.zone.orEmpty()).filter { it.isNotEmpty() }.joinToString("  ·  ") }
+                },
+                switchedFrom?.let { "$it's data is put away" },
+            ).filter { it.isNotEmpty() }.joinToString("\n")
             g == Game.OUT -> "Choose a character, or quit the game. Their data is put away."
             away -> "No data from the game: logged out, on the character screen, a loading screen, or the game is closed. " +
                 (keptFor?.let { "$it's data is put away until the game says who is playing." } ?: "")
@@ -1261,6 +1304,7 @@ class MainActivity : Activity() {
         markSeen(chatTab)
         updateBadges()
 
+        content.addView(chatFileCard(), cardParams())
         val shown = chat.lines.filter { chatTab.kinds == null || it.kind in chatTab.kinds!! }
         if (shown.isEmpty()) {
             content.addView(empty(if (chat.lines.isEmpty()) "No chat yet" else "Nothing here yet",

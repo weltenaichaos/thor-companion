@@ -151,7 +151,12 @@ end
 chatOwner:RegisterEvent("PLAYER_LOGIN")
 chatOwner:RegisterEvent("PLAYER_REGEN_ENABLED")
 chatOwner:SetScript("OnEvent", function(_, event)
-    if event == "PLAYER_LOGIN" then hookEditBoxes() end
+    if event == "PLAYER_LOGIN" then
+        hookEditBoxes()
+        -- The game's own chat log (Logs/WoWChatLog.txt, like /chatlog): the app can read
+        -- the chat from the file instead of the square.
+        pcall(function() if not LoggingChat() then LoggingChat(true) end end)
+    end
     if event == "PLAYER_LOGIN" or chatPending then ns.BindWhispers() end
 end)
 

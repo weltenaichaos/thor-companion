@@ -22,6 +22,7 @@ import java.io.Writer
  *   A <Name-Realm>    the addons are loading (the loading screen ends soon)
  *   O <Name-Realm>    the character's saved settings were written (logout, quit or /reload)
  *   X                 the game is closed
+ *   C <line>          a new line in the game's chat log (Logs/WoWChatLog.txt, which the addon switches on)
  * Only watches; changes nothing.
  */
 class GameFiles(private val out: Writer, hint: String?) {
@@ -34,6 +35,9 @@ class GameFiles(private val out: Writer, hint: String?) {
     private var addons = false
     /** Whether the game's process was found since it started: only then does its going away count. */
     private var processSeen = false
+    /** How far the chat log was read, and an unfinished last line. */
+    private var chatOffset = 0L
+    private var chatPartial = ""
 
     init {
         say("F ${folder?.path ?: "-"}")
@@ -71,8 +75,14 @@ class GameFiles(private val out: Writer, hint: String?) {
     private fun watch() {
         val game = folder ?: return
         synchronized(observers) { observers.forEach { it.stopWatching() }; observers.clear() }
-        add(File(game, "Logs"), FileObserver.OPEN) { _, _ ->
-            if (!running) { running = true; processSeen = false; character = null; inWorld = false; say("S") }
+        val logs = File(game, "Logs")
+        chatOffset = File(logs, CHAT_LOG).length()
+        add(logs, FileObserver.OPEN or FileObserver.MODIFY or FileObserver.CREATE) { event, path ->
+            if ((event and FileObserver.OPEN) != 0 && !running) { running = true; processSeen = false; character = null; inWorld = false; say("S") }
+            if (path == CHAT_LOG) {
+                if ((event and FileObserver.CREATE) != 0) chatOffset = 0
+                if ((event and FileObserver.MODIFY) != 0) tailChat(File(logs, CHAT_LOG))
+            }
         }
         val accounts = File(game, "WTF/Account")
         add(accounts, FileObserver.CREATE) { _, _ -> rewatch() }
@@ -124,6 +134,27 @@ class GameFiles(private val out: Writer, hint: String?) {
         }
     }
 
+    /** The lines added to the chat log since last time. */
+    private fun tailChat(file: File) {
+        val length = file.length()
+        if (length < chatOffset) chatOffset = 0  // started over
+        if (length == chatOffset) return
+        val bytes = runCatching {
+            java.io.RandomAccessFile(file, "r").use { f ->
+                f.seek(chatOffset)
+                ByteArray((length - chatOffset).coerceAtMost(256 * 1024).toInt()).also { f.readFully(it) }
+            }
+        }.getOrNull() ?: return
+        chatOffset += bytes.size
+        val text = chatPartial + String(bytes, Charsets.UTF_8)
+        val lines = text.split('\n')
+        chatPartial = lines.last()
+        for (l in lines.dropLast(1)) {
+            val line = l.trimEnd('\r')
+            if (line.isNotBlank()) say("C $line")
+        }
+    }
+
     private fun entered(name: String) {
         if (!running) { running = true; say("S") }
         character = name; inWorld = true; addons = false
@@ -144,6 +175,7 @@ class GameFiles(private val out: Writer, hint: String?) {
     }
 
     companion object {
+        const val CHAT_LOG = "WoWChatLog.txt"
         private val EXE = Regex("""(?i)wow[^/\\]*\.exe$""")
 
         /** The game's process: its folder, from its command line ("wine /data/.../WowB-ARM64.exe ..."). */

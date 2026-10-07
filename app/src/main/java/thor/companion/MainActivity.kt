@@ -483,6 +483,9 @@ class MainActivity : Activity() {
                 absent == 5 -> 10_000L
                 absent > 5 -> 5000L
                 fast -> 200L
+                // The game is back but its status (who is playing) slipped by: read
+                // fast for the next one, so what is held back can go to the right character.
+                held.isNotEmpty() -> 200L
                 away -> 5000L
                 walking -> 250L
                 else -> 1000L

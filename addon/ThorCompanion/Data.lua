@@ -298,6 +298,9 @@ local statusUrgent = true
 local caughtUp, caughtUpBy = false, 0
 local CATCH_UP_SECONDS = 60
 local statusHold
+-- For a while after a loading screen the status goes out every few seconds: an
+-- app that missed the first one keeps what it reads apart until it knows who is playing.
+local loadedAt = 0
 function ns.ChatUrgent() chatUrgent = true end
 local bagEvents = CreateFrame("Frame")
 bagEvents:RegisterEvent("BAG_UPDATE_DELAYED")
@@ -312,6 +315,13 @@ local function nextMessage()
         statusUrgent = false
         statusHold = 1.5  -- long enough for an app that looks once a second
         bagsUrgent = true -- and the bags right after it
+    elseif GetTime() - loadedAt < 30 and GetTime() - statusAt > 8 then
+        -- The status again soon after loading (see loadedAt), in between: the turns go on where they were.
+        local ok, p = pcall(kinds[1])
+        if ok and p then
+            statusAt, lastSent[1], showingTurn = GetTime(), p, 1
+            return encode(1, p)
+        end
     elseif chatUrgent then
         turn = 3  -- the chat (4) is next
         chatUrgent = false
@@ -401,6 +411,7 @@ loadEvents:SetScript("OnEvent", function(_, event)
         loading = false
         quietUntil = GetTime() + 3
         statusUrgent = true
+        loadedAt = GetTime()
     end
 end)
 local f = CreateFrame("Frame")

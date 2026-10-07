@@ -395,6 +395,7 @@ class MainActivity : Activity() {
         if (!addonChecked) {
             addonChecked = true
             installAddon()
+            EventProbe.start(this)
         }
         var misses = 0
         var seenSquare = false
@@ -417,9 +418,9 @@ class MainActivity : Activity() {
                 near = frame.row
                 val message = assembler.add(frame)
                 if (message != null) {
-                    if (seenAt == 0L) seenAt = SystemClock.uptimeMillis()
+                    if (seenAt == 0L) { seenAt = SystemClock.uptimeMillis(); EventProbe.note("first message ${message.take(4)}") }
                     messageAt = SystemClock.uptimeMillis()
-                    if (away) { away = false; runOnUiThread { render() } }
+                    if (away) { away = false; EventProbe.note("square back: ${message.take(4)}"); runOnUiThread { render() } }
                     if (message.startsWith("TS1|") || !awaitStatus) {
                         handle(message, assembler.lastSeq)
                         // Who is playing is known now: what came before the status is theirs.
@@ -473,6 +474,7 @@ class MainActivity : Activity() {
             val stale = messageAt != 0L && SystemClock.uptimeMillis() - messageAt > STALE_MS
             if ((absent == 3 && seenSquare || stale) && !away) {
                 away = true
+                EventProbe.note(if (stale) "square says nothing new" else "square gone")
                 awaitStatus = true
                 fresh.clear()
                 runOnUiThread { startLoading() }
@@ -505,7 +507,7 @@ class MainActivity : Activity() {
         if (message.startsWith("TS1|")) {
             movedAt = SystemClock.uptimeMillis()
             val name = message.split('|').getOrNull(1)
-            if (name != null && name != "error" && name != "?" && name != keptFor) switchCharacter(name)
+            if (name != null && name != "error" && name != "?" && name != keptFor) { EventProbe.note("character $name"); switchCharacter(name) }
         }
         remember(message)
         keptKey(message)?.let { fresh += it }

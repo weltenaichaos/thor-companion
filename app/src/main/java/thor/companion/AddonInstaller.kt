@@ -22,7 +22,7 @@ object AddonInstaller {
     private const val KIT = "Download/Thor-Forever"
     /** How deep in shared storage a kit is looked for (Download/Thor-Forever/installer/launch-game.sh is 4). */
     private const val DEPTH = 7
-    private val STORAGE = listOf("/sdcard", "/storage/emulated/0", "/mnt/user/0/emulated/0", "/data/media/0")
+    val STORAGE = listOf("/sdcard", "/storage/emulated/0", "/mnt/user/0/emulated/0", "/data/media/0")
 
     /**
      * What came of [install]: [installed] when a folder got this version, else why not

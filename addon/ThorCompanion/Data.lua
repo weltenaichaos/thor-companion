@@ -455,13 +455,19 @@ f:SetScript("OnEvent", function()
     ThorCompanionDB = ThorCompanionDB or {}
     ns.StripShow(ThorCompanionDB.hidden ~= true)
     caughtUpBy = GetTime() + CATCH_UP_SECONDS
-    ticker = C_Timer.NewTicker(0.5, function()
+    -- Ten times a second, so the next message goes up as soon as the last one is done
+    -- (most calls only find the square still busy); the refreshes count half seconds.
+    local sub, idleUntil = 0, 0
+    ticker = C_Timer.NewTicker(0.1, function()
         -- Nothing while a loading screen is up, and for a moment after: the game is
         -- busy setting up the zone then, and asking it things is better left alone.
         if loading or GetTime() < quietUntil then return end
-        ticks = ticks + 1
-        if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain, known = {}, true, {} ns.QuestPagesAgain() end
-        if ticks % MAP_REFRESH_TICKS == 0 then lastSent[5], known[5] = nil, nil end
+        sub = sub + 1
+        if sub % 5 == 0 then
+            ticks = ticks + 1
+            if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain, known = {}, true, {} ns.QuestPagesAgain() end
+            if ticks % MAP_REFRESH_TICKS == 0 then lastSent[5], known[5] = nil, nil end
+        end
         -- What came of a tap goes out at once; whatever it cut short is sent again.
         local okOpen, opened = pcall(ns.ChatOpenPayload)
         if okOpen and opened then
@@ -498,9 +504,11 @@ f:SetScript("OnEvent", function()
             okAuto, shown = pcall(ns.IconsAuto)
             if okAuto and shown then return end
         end
+        -- Building every kind to find nothing changed costs: when nothing was, wait half a second.
+        if GetTime() < idleUntil then return end
         statusHold = nil
         local p = nextMessage()
-        if p then ns.StripWrite(p, statusHold) end
+        if p then ns.StripWrite(p, statusHold) else idleUntil = GetTime() + 0.45 end
     end)
 end)
 

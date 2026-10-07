@@ -498,7 +498,7 @@ class MainActivity : Activity() {
                 runOnUiThread { startLoading() }
             }
             val period = when {
-                game == Game.LOADING && result !is StripDecoder.Result.Ok -> 2000L
+                game == Game.LOADING && result !is StripDecoder.Result.Ok -> 1000L
                 // Closed or on the character screen: only a look now and then, in case an event was missed.
                 game == Game.CLOSED && result !is StripDecoder.Result.Ok -> 30_000L
                 game == Game.STARTING && result !is StripDecoder.Result.Ok -> 10_000L

@@ -561,9 +561,12 @@ class MainActivity : Activity() {
         }
     }
 
-    /** A line of the game's chat log file: the chat comes from there, not the square (see [ChatFile]). */
+    /** A line of the game's chat log file: the public channels come from there (see [ChatFile]). */
     private fun onChatFile(raw: String, history: Boolean = false) {
         val line = ChatFile.parse(raw) ?: return
+        // The game writes its log a few kilobytes at a time: fine for the busy public
+        // channels, too late for your group, guild and whispers, which still come from the square.
+        if (line.kind != "channel") return
         if (!history) chatFromFile++
         runOnUiThread {
             chat.add(line)

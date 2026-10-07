@@ -46,7 +46,8 @@ class ChatLog(private val keep: Int = 200) {
         val key = "file:" + total
         seen.add(key)
         order.add(key)
-        rank.add(Long.MAX_VALUE)
+        // After what is here now: lines from the square that come later still go after it.
+        rank.add(rank.lastOrNull() ?: 0L)
         _lines.add(line)
         total++
         if (_lines.size > keep) {

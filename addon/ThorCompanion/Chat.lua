@@ -161,8 +161,8 @@ chatOwner:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_LOGIN" or chatPending then ns.BindWhispers() end
 end)
 
--- With the game's chat log on, the app reads the chat from that file (half a second
--- after it is said): the square then carries only the head (whisper names, channels).
+-- With the game's chat log on, the app reads the public channels from that file:
+-- the square then carries the head (whisper names, channels) and the other lines.
 local function fileChat()
     local ok, on = pcall(LoggingChat)
     return ok and on
@@ -193,22 +193,7 @@ local function add(kind, sender, channel, text)
         sends[lines[1][1]] = nil
         table.remove(lines, 1)
     end
-    if kind ~= "channel" and kind ~= "system" and ns.ChatUrgent and not fileChat() then ns.ChatUrgent() end
-end
-
--- The game keeps the chat log's lines in memory until it has a few kilobytes of them,
--- so in a quiet chat the file (and the app) would lag by minutes. Switching the log
--- off and on again (silently, unlike /chatlog) writes them out: once a line comes,
--- at most once a second.
-local flushAt, flushing = 0, false
-local function flushLog()
-    if flushing or not fileChat() then return end
-    flushing = true
-    C_Timer.After(math.max(0.2, flushAt + 1 - GetTime()), function()
-        flushing = false
-        flushAt = GetTime()
-        pcall(function() LoggingChat(false) LoggingChat(true) end)
-    end)
+    if kind ~= "channel" and kind ~= "system" and ns.ChatUrgent then ns.ChatUrgent() end
 end
 
 local f = CreateFrame("Frame")
@@ -221,7 +206,6 @@ f:SetScript("OnEvent", function(_, event, text, sender, _, channelName)
         sender = ""
     end
     add(kind, sender, kind == "channel" and channelName or "", text)
-    flushLog()
 end)
 
 -- The public channels you are in: "1 General,2 Trade,...".
@@ -262,17 +246,20 @@ function ns.ChatPayload(again, peek)
         used = used + #entry + 1
         return true
     end
-    if fileChat() then
-        -- Only the head, when it changed.
-    elseif again then
+    -- With the game's chat log on, the public channels come from that file (the game
+    -- writes it a few kilobytes at a time: fine for a busy Trade, too slow for a
+    -- whisper), the rest still from here.
+    local file = fileChat()
+    if again then
         for _, l in ipairs(lines) do
-            if l[1] >= nextId - RESEND then take(l) end
+            if l[1] >= nextId - RESEND and not (file and l[2] == "channel") then take(l) end
         end
     else
         for _, l in ipairs(lines) do
             if l[2] ~= "channel" and (sends[l[1]] or 0) < SENDS and not take(l) then break end
         end
         for _, l in ipairs(lines) do
+            if file then break end
             if l[2] == "channel" and (sends[l[1]] or 0) < 1 and not take(l) then break end
         end
     end

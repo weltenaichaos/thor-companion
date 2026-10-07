@@ -132,4 +132,14 @@ class ChatLogTest {
         assertEquals(1, log.lines.size)
         assertEquals(1, log.total)
     }
+
+    @Test
+    fun squareLinesAfterFileLines() {
+        val log = ChatLog()
+        log.add(ChatLine("channel", "Bo", "wts", "Trade"))
+        log.add("TH1|s1\t\t\n1\tparty\tPagrin\t\tomw")
+        log.add(ChatLine("channel", "Al", "lfg", "Trade"))
+        log.add("TH1|s1\t\t\n2\tguild\tBob\t\tgz")
+        assertEquals(listOf("wts", "omw", "lfg", "gz"), log.lines.map { it.text })
+    }
 }

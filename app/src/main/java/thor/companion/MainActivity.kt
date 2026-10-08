@@ -766,6 +766,16 @@ class MainActivity : Activity() {
         val px = screen.capture(rows = 4000) ?: return done("Item icons not taken: the screenshot failed")
         val frame = (StripDecoder.decode(px) as? StripDecoder.Result.Ok)?.frame?.takeIf { it.crcOk }
         if (frame == null || frame.seq != seq) return done("Item icons not taken: they went away before the screenshot")
+        // The icons sit on black: if the gaps around them aren't black, the grid had gone
+        // (the square can still show its message) and these would be bits of the world.
+        fun dark(x: Int, y: Int) = x !in 0 until px.width || y !in 0 until px.height ||
+            px.rgb(x, y).let { Color.red(it) < 48 && Color.green(it) < 48 && Color.blue(it) < 48 }
+        var light = 0
+        for (i in pic.itemIds.indices) {
+            val r = pic.onScreen(frame, i)
+            if (!dark(r[0] - 3, (r[1] + r[3]) / 2) || !dark((r[0] + r[2]) / 2, r[1] - 3)) light++
+        }
+        if (light * 5 > pic.itemIds.size) return done("Item icons not taken: they went away before the screenshot")
         var taken = 0
         for ((i, id) in pic.itemIds.withIndex()) {
             val r = pic.onScreen(frame, i)
@@ -1212,11 +1222,12 @@ class MainActivity : Activity() {
         controls.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f))
         controls.addView(take)
         content.addView(controls, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4); bottomMargin = dp(6) })
-        // The selected quest: how far, and ✕ to clear it.
+        // The selected quest: how far, and ✕ to clear it. It lies over the top of the map,
+        // so following a quest doesn't push the map down off the screen.
         val questRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = Theme.box(context, SURFACE, 12, Theme.withAlpha(Color.WHITE, 90))
+            background = Theme.box(context, Theme.withAlpha(SURFACE, 225), 12, Theme.withAlpha(Color.WHITE, 90))
             setPadding(dp(12), dp(4), dp(4), dp(4))
         }
         val questText = line("", TEXT, 14f).apply { setPadding(0, 0, 0, 0) }
@@ -1227,9 +1238,11 @@ class MainActivity : Activity() {
             view.highlight = null
             updateCompass()
         }, LinearLayout.LayoutParams(dp(44), -2))
-        content.addView(questRow, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
         questLine = questText
-        content.addView(view, LinearLayout.LayoutParams(-1, maxOf(dp(240), scroll.height - dp(110))))
+        val mapBox = android.widget.FrameLayout(this)
+        mapBox.addView(view, android.widget.FrameLayout.LayoutParams(-1, -1))
+        mapBox.addView(questRow, android.widget.FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply { setMargins(dp(6), dp(6), dp(6), 0) })
+        content.addView(mapBox, LinearLayout.LayoutParams(-1, maxOf(dp(240), scroll.height - dp(110))))
         val note = line("", DIM, 12f).apply { setPadding(dp(4), dp(4), 0, 0) }
         content.addView(note)
         pictureLine = note

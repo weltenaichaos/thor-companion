@@ -458,6 +458,7 @@ f:SetScript("OnEvent", function()
     -- Ten times a second, so the next message goes up as soon as the last one is done
     -- (most calls only find the square still busy); the refreshes count half seconds.
     local sub, idleUntil = 0, 0
+    local overlayUp = false
     ticker = C_Timer.NewTicker(0.1, function()
         -- Nothing while a loading screen is up, and for a moment after: the game is
         -- busy setting up the zone then, and asking it things is better left alone.
@@ -487,13 +488,26 @@ f:SetScript("OnEvent", function()
         if picture then
             if showingTurn and ns.StripBusy() then interrupted(showingTurn) end showingTurn = nil
             ns.StripWrite(picture)
+            overlayUp = true
             return
         end
         local okIcons, icons = pcall(ns.IconsPayload)
         if okIcons and icons then
             if showingTurn and ns.StripBusy() then interrupted(showingTurn) end showingTurn = nil
             ns.StripWrite(icons)
+            overlayUp = true
             return
+        end
+        -- The picture or icons just went away: the square must not keep saying where they
+        -- were, or the app may still take a screenshot of what is behind them.
+        if overlayUp then
+            overlayUp = false
+            local ok, p = pcall(kinds[1])
+            if ok and p then
+                statusAt, lastSent[1], showingTurn = GetTime(), p, 1
+                ns.StripWrite(p)
+                return
+            end
         end
         if ns.StripBusy() then return end
         -- What the app has no picture of yet comes up by itself, one at a time (not while

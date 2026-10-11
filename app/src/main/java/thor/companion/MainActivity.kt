@@ -1884,6 +1884,11 @@ class MainActivity : Activity() {
             field.setText(text.take(255))
             field.setSelection(field.text.length)
         }
+        val speechIntent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+            putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        }
         val recognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(this)
         listening = recognizer
         mic.background = Theme.box(this, Theme.BAD, 18)
@@ -1898,10 +1903,19 @@ class MainActivity : Activity() {
                 stopListening()
             }
             override fun onError(error: Int) {
+                // The language is known but not on the Thor yet: ask the speech app to fetch it.
+                if (error == 13 && android.os.Build.VERSION.SDK_INT >= 33) {
+                    val asked = runCatching { recognizer.triggerModelDownload(speechIntent) }.isSuccess
+                    say(if (asked) "Downloading the speech language for ${Locale.getDefault().displayLanguage}: tap 🎤 again in a minute"
+                        else "The speech language isn't downloaded: Speech Services by Google settings → Languages")
+                    stopListening()
+                    return
+                }
                 say(when (error) {
                     android.speech.SpeechRecognizer.ERROR_NO_MATCH, android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Didn't catch that: tap 🎤 to try again"
                     android.speech.SpeechRecognizer.ERROR_NETWORK, android.speech.SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech recognition needs the internet here"
                     android.speech.SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "The app may not use the microphone (Android settings)"
+                    12, 13 -> "${Locale.getDefault().displayLanguage} isn't available for speech: Speech Services by Google settings → Languages"
                     else -> "Speech recognition stopped (error $error)"
                 })
                 stopListening()
@@ -1913,10 +1927,7 @@ class MainActivity : Activity() {
             override fun onEndOfSpeech() { mic.background = Theme.box(this@MainActivity, RAISED, 18) }
             override fun onEvent(type: Int, p: android.os.Bundle?) {}
         })
-        recognizer.startListening(android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        })
+        recognizer.startListening(speechIntent)
         micFor = field to mic
     }
 

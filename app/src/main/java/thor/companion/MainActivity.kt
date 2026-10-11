@@ -479,7 +479,7 @@ class MainActivity : Activity() {
                     // While the start-up card shows, each message may tick something off.
                     if (!ready) runOnUiThread { if (!ready) render() }
                 }
-            } else if (++misses == 4) {
+            } else if (++misses == 4 && listening == null && SystemClock.uptimeMillis() >= quietUntil) {
                 near = -1
                 val why = when {
                     px == null -> "the capture failed"
@@ -2098,20 +2098,32 @@ class MainActivity : Activity() {
                 val typed = KeySender.type(this, target, line)
                 if (typed != null && !typed.startsWith("(focus")) return@execute runOnUiThread { say("$label not sent: $typed") }
             }
-            val beforeEnter = chatBox
-            KeySender.send(this, target, "ENTER")
-            // Sent, the box closes. If the addon says, after the Enter, that it is still open
-            // and empty, close it (Escape only then: with the box closed it opens the menu).
-            val shut = SystemClock.uptimeMillis() + 2000
-            var left: ChatBox? = null
-            while (SystemClock.uptimeMillis() < shut) {
-                val now = chatBox
-                if (now !== beforeEnter) { left = now; if (now == null || !now.open || now.length == 0) break }
-                SystemClock.sleep(50)
-            }
-            if (left != null && left.open && left.length == 0 && left.n == box.n) {
-                android.util.Log.i("ThorCompanion", "chat box still open after Enter: Escape")
-                KeySender.send(this, target, "ESCAPE")
+            // Enter, and make sure it took: the addon says when the box closes. Still open
+            // with the text after a while: that Enter got lost (the game had just come back
+            // to the front), so once more. Open and empty: closed with Escape (only on the
+            // addon's word that it is open; with the box closed, Escape opens the menu).
+            var enters = 0
+            while (enters < 2) {
+                val beforeEnter = chatBox
+                KeySender.send(this, target, "ENTER")
+                enters++
+                val until = SystemClock.uptimeMillis() + 3000
+                var left: ChatBox? = null
+                while (SystemClock.uptimeMillis() < until) {
+                    val now = chatBox
+                    if (now !== beforeEnter) { left = now; if (now == null || !now.open) break }
+                    lastKeyAt = SystemClock.uptimeMillis()
+                    SystemClock.sleep(50)
+                }
+                // Only on the addon's word after this Enter (it says so every second while the box is open).
+                val last = left ?: break
+                if (!last.open || last.n != box.n) break
+                if (last.length == 0) {
+                    android.util.Log.i("ThorCompanion", "chat box open and empty after Enter: Escape")
+                    KeySender.send(this, target, "ESCAPE")
+                    break
+                }
+                android.util.Log.i("ThorCompanion", "chat box still holds the text after Enter: once more")
             }
             runOnUiThread { say(when {
                 pasted -> "$label: sent (pasted)"

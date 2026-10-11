@@ -176,8 +176,9 @@ class MainActivity : Activity() {
             maxLines = 2
             ellipsize = android.text.TextUtils.TruncateAt.END
             setPadding(dp(8), 0, dp(8), 0)
-            // Long-press: the battery check (how much reading the game's screen costs).
-            setOnLongClickListener { say(captureStats()); true }
+            // Long-press: the battery check (how much reading the game's screen costs), and
+            // the Thor's recent log saved next to the kit, to send along when something goes wrong.
+            setOnLongClickListener { say(captureStats()); saveLog(); true }
         }
         loadButton = chip("Load from the game") {
             pressKey(ActionKeys.REFRESH, onDone = { say("Asked the game for everything again…") }) { err -> say("Couldn't ask the game: $err") }
@@ -230,6 +231,7 @@ class MainActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
+        android.util.Log.i("ThorCompanion", "onStart")
         worker = Thread(::loop, "strip-reader").apply { isDaemon = true; start() }
     }
 
@@ -259,16 +261,6 @@ class MainActivity : Activity() {
     @Deprecated("The plain Activity's way; this app has no AndroidX.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == VOICE_WINDOW) {
-            voiceOpen = false
-            val words = data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim()
-            val field = micFor?.first
-            if (resultCode != RESULT_OK || words.isNullOrEmpty() || field == null || composing == null) { say("No text from the voice window"); return }
-            field.setText(listOf(field.text.toString().trimEnd(), words).filter { it.isNotEmpty() }.joinToString(" ").take(255))
-            field.setSelection(field.text.length)
-            say("Check the text, then tap Send")
-            return
-        }
         if (requestCode != CHOOSE_KIT || resultCode != RESULT_OK) return
         val path = data?.data?.let { AddonInstaller.pathOf(it) }
             // The AddOns folder itself chosen: the Thor-Forever folder is the one around it.
@@ -294,9 +286,14 @@ class MainActivity : Activity() {
         return box
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        android.util.Log.i("ThorCompanion", "window focus $hasFocus")
+    }
+
     override fun onStop() {
-        // The speech app's voice window covers the app for a moment: keep the message open for its text.
-        if (!voiceOpen) closeCompose()
+        android.util.Log.i("ThorCompanion", "onStop")
+        closeCompose()
         worker = null
         watcher = null
         runCatching { watchSocket?.close() }
@@ -1100,6 +1097,7 @@ class MainActivity : Activity() {
 
     /** The status line, with its dot: green while the game's data comes in, red when it stopped, amber before it ever came. */
     private fun say(text: String, notice: Boolean = true) {
+        if (notice) android.util.Log.i("ThorCompanion", "say: $text")
         if (notice) saidAt = SystemClock.uptimeMillis()
         status.text = text
         val since = SystemClock.uptimeMillis() - frameAt
@@ -1941,9 +1939,6 @@ class MainActivity : Activity() {
                     return
                 }
                 busyRetried = false
-                if (error == android.speech.SpeechRecognizer.ERROR_RECOGNIZER_BUSY && voiceWindow()) return
-                // 12, 13: the speech app won't do this language here; its own voice window may.
-                if ((error == 12 || error == 13) && voiceWindow()) return
                 say(when (error) {
                     android.speech.SpeechRecognizer.ERROR_NO_MATCH, android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Didn't catch that: tap 🎤 to try again"
                     android.speech.SpeechRecognizer.ERROR_NETWORK, android.speech.SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech recognition needs the internet here"
@@ -2008,17 +2003,6 @@ class MainActivity : Activity() {
             ?: have.firstOrNull { same(it).language == "en" }
             ?: have.first()
     }
-
-    /** The speech app's own voice window, for when listening here fails; false when there is none. */
-    private fun voiceWindow(): Boolean {
-        val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "Your chat message")
-        voiceOpen = runCatching { @Suppress("DEPRECATION") startActivityForResult(intent, VOICE_WINDOW) }.isSuccess
-        return voiceOpen
-    }
-
-    private var voiceOpen = false
 
     private fun stopListening() {
         // Destroyed after the callback that stopped it has returned, not inside it.
@@ -2103,7 +2087,6 @@ class MainActivity : Activity() {
                     lastKeyAt = SystemClock.uptimeMillis()
                     SystemClock.sleep(50)
                 }
-                if (!pasted) pasteWorks = false
             }
             if (!pasted) {
                 val typed = KeySender.type(this, target, line)
@@ -2112,9 +2095,18 @@ class MainActivity : Activity() {
             KeySender.send(this, target, "ENTER")
             runOnUiThread { say(when {
                 pasted -> "$label: sent (pasted)"
-                tried -> "$label: sent (typed: the game didn't take the paste, so it types until the app restarts)"
+                tried -> "$label: sent (typed: the game didn't take the paste)"
                 else -> "$label: sent"
             }) }
+        }
+    }
+
+    /** The Thor's recent log (this app, the speech service, the game's input) into Download/Thor-Forever, through root. */
+    private fun saveLog() {
+        keys.execute {
+            val out = "/sdcard/Download/Thor-Forever/companion-log.txt"
+            val ok = RootShell.exec("logcat -d -t 3000 -v time > $out 2>&1; echo done") == "done"
+            runOnUiThread { say(if (ok) "Log saved: Download/Thor-Forever/companion-log.txt" else "Log not saved (no root shell)") }
         }
     }
 
@@ -2409,7 +2401,6 @@ class MainActivity : Activity() {
 
     private companion object {
         const val MIC_PERMISSION = 7
-        const val VOICE_WINDOW = 8
         /** Message kinds kept across restarts. */
         /** After the square last changed, how long the app keeps reading five times a second (the addon assumes 2.5 s). */
         const val BUSY_MS = 3000L

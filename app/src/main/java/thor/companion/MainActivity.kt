@@ -516,7 +516,10 @@ class MainActivity : Activity() {
             // leave its last picture on the top screen. The addon sends its status at least
             // every 10 s, so nothing new for longer means it is gone.
             val stale = messageAt != 0L && SystemClock.uptimeMillis() - messageAt > STALE_MS
-            if ((absent == 3 && seenSquare || stale) && !away) {
+            // While the microphone listens (and a little after), the game may stand still: the
+            // speech service takes the sound, and the game can pause for that. Not "gone".
+            val speaking = listening != null || SystemClock.uptimeMillis() < quietUntil
+            if ((absent == 3 && seenSquare || stale) && !away && !speaking) {
                 away = true
                 awaitStatus = true
                 fresh.clear()
@@ -1886,7 +1889,9 @@ class MainActivity : Activity() {
     }
 
     /** Speech to text for the message being written (null: not listening). */
-    private var listening: android.speech.SpeechRecognizer? = null
+    @Volatile private var listening: android.speech.SpeechRecognizer? = null
+    /** Until then a game that stands still is not taken for gone (see the reader loop). */
+    @Volatile private var quietUntil = 0L
     private var micFor: Pair<android.widget.EditText, TextView>? = null
 
     /**
@@ -2005,6 +2010,7 @@ class MainActivity : Activity() {
     }
 
     private fun stopListening() {
+        quietUntil = SystemClock.uptimeMillis() + 15_000
         // Destroyed after the callback that stopped it has returned, not inside it.
         listening?.let { r -> runCatching { r.cancel() }; footer.post { runCatching { r.destroy() } } }
         listening = null
@@ -2092,7 +2098,21 @@ class MainActivity : Activity() {
                 val typed = KeySender.type(this, target, line)
                 if (typed != null && !typed.startsWith("(focus")) return@execute runOnUiThread { say("$label not sent: $typed") }
             }
+            val beforeEnter = chatBox
             KeySender.send(this, target, "ENTER")
+            // Sent, the box closes. If the addon says, after the Enter, that it is still open
+            // and empty, close it (Escape only then: with the box closed it opens the menu).
+            val shut = SystemClock.uptimeMillis() + 2000
+            var left: ChatBox? = null
+            while (SystemClock.uptimeMillis() < shut) {
+                val now = chatBox
+                if (now !== beforeEnter) { left = now; if (now == null || !now.open || now.length == 0) break }
+                SystemClock.sleep(50)
+            }
+            if (left != null && left.open && left.length == 0 && left.n == box.n) {
+                android.util.Log.i("ThorCompanion", "chat box still open after Enter: Escape")
+                KeySender.send(this, target, "ESCAPE")
+            }
             runOnUiThread { say(when {
                 pasted -> "$label: sent (pasted)"
                 tried -> "$label: sent (typed: the game didn't take the paste)"

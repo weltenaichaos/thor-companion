@@ -2137,7 +2137,7 @@ class MainActivity : Activity() {
     private fun saveLog() {
         keys.execute {
             val out = "/sdcard/Download/Thor-Forever/companion-log.txt"
-            val ok = RootShell.exec("logcat -d -t 3000 -v time > $out 2>&1; echo done") == "done"
+            val ok = RootShell.exec("logcat -d -t 3000 -v time > $out 2>&1; echo done")?.trim() == "done"
             runOnUiThread { say(if (ok) "Log saved: Download/Thor-Forever/companion-log.txt" else "Log not saved (no root shell)") }
         }
     }

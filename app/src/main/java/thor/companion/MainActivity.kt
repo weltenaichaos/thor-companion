@@ -1835,6 +1835,9 @@ class MainActivity : Activity() {
         footer.addView(quick)
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, 0) }
         row.addView(field, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
+        val mic = chip("🎤") {}
+        mic.setOnClickListener { if (listening != null) stopListening() else listen(field, mic) }
+        row.addView(mic, LinearLayout.LayoutParams(dp(48), -2).apply { marginEnd = dp(6) })
         row.addView(chip("Send") { send() }.apply { background = Theme.box(context, ACCENT, 18); setTextColor(Color.BLACK) })
         row.addView(chip("✕") { closeCompose() }, LinearLayout.LayoutParams(dp(44), -2).apply { marginStart = dp(4) })
         footer.addView(row)
@@ -1856,7 +1859,84 @@ class MainActivity : Activity() {
         getPreferences(MODE_PRIVATE).edit().putString("quickReplies", list.joinToString("\n")).apply()
     }
 
+    /** Speech to text for the message being written (null: not listening). */
+    private var listening: android.speech.SpeechRecognizer? = null
+    private var micFor: Pair<android.widget.EditText, TextView>? = null
+
+    /**
+     * Listens once through the Thor's microphone and puts what you said into [field],
+     * after what is already there. Nothing is sent: you read it, fix it if need be, and
+     * tap Send. The microphone is only on until you stop talking (or tap 🎤 again).
+     */
+    private fun listen(field: android.widget.EditText, mic: TextView) {
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            micFor = field to mic
+            requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), MIC_PERMISSION)
+            return
+        }
+        if (!android.speech.SpeechRecognizer.isRecognitionAvailable(this)) {
+            say("No speech recognition on this device: the keyboard's own microphone key may still work")
+            return
+        }
+        val before = field.text.toString().trimEnd()
+        fun show(words: String) {
+            val text = listOf(before, words.trim()).filter { it.isNotEmpty() }.joinToString(" ")
+            field.setText(text.take(255))
+            field.setSelection(field.text.length)
+        }
+        val recognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(this)
+        listening = recognizer
+        mic.background = Theme.box(this, Theme.BAD, 18)
+        say("Listening… speak your message")
+        fun words(b: android.os.Bundle?) =
+            b?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+        recognizer.setRecognitionListener(object : android.speech.RecognitionListener {
+            override fun onPartialResults(b: android.os.Bundle?) { words(b).takeIf { it.isNotBlank() }?.let(::show) }
+            override fun onResults(b: android.os.Bundle?) {
+                val w = words(b)
+                if (w.isNotBlank()) { show(w); say("Check the text, then tap Send") } else say("Didn't catch that: tap 🎤 to try again")
+                stopListening()
+            }
+            override fun onError(error: Int) {
+                say(when (error) {
+                    android.speech.SpeechRecognizer.ERROR_NO_MATCH, android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Didn't catch that: tap 🎤 to try again"
+                    android.speech.SpeechRecognizer.ERROR_NETWORK, android.speech.SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech recognition needs the internet here"
+                    android.speech.SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "The app may not use the microphone (Android settings)"
+                    else -> "Speech recognition stopped (error $error)"
+                })
+                stopListening()
+            }
+            override fun onReadyForSpeech(p: android.os.Bundle?) {}
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rms: Float) {}
+            override fun onBufferReceived(b: ByteArray?) {}
+            override fun onEndOfSpeech() { mic.background = Theme.box(this@MainActivity, RAISED, 18) }
+            override fun onEvent(type: Int, p: android.os.Bundle?) {}
+        })
+        recognizer.startListening(android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        })
+        micFor = field to mic
+    }
+
+    private fun stopListening() {
+        listening?.let { runCatching { it.cancel() }; runCatching { it.destroy() } }
+        listening = null
+        micFor?.second?.background = Theme.box(this, RAISED, 18)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, results)
+        if (requestCode != MIC_PERMISSION) return
+        val (field, mic) = micFor ?: return
+        if (results.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED && composing != null) listen(field, mic)
+        else say("Without the microphone, speech to text can't work")
+    }
+
     private fun closeCompose() {
+        stopListening()
+        micFor = null
         if (composing == null) return
         composing = null
         getSystemService(android.view.inputmethod.InputMethodManager::class.java)
@@ -2227,6 +2307,7 @@ class MainActivity : Activity() {
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     private companion object {
+        const val MIC_PERMISSION = 7
         /** Message kinds kept across restarts. */
         /** After the square last changed, how long the app keeps reading five times a second (the addon assumes 2.5 s). */
         const val BUSY_MS = 3000L

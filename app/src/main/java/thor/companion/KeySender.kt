@@ -65,32 +65,39 @@ object KeySender {
     }
 
     private fun connect(context: Context): Boolean {
-        // One socket per app version, so an updated app never talks to an old helper.
-        val name = "thor_companion_input_" + context.packageManager
-            .getPackageInfo(context.packageName, 0).longVersionCode
-        if (tryConnect(name)) return true
-        val apk = RootShell.quote(context.applicationInfo.sourceDir)
-        val uid = android.os.Process.myUid()
-        RootShell.exec(
-            "CLASSPATH=$apk nohup app_process /system/bin thor.companion.InputHelper $uid $name >/dev/null 2>&1 &"
-        ) ?: return false
-        val until = SystemClock.uptimeMillis() + 5000
-        while (SystemClock.uptimeMillis() < until) {
-            SystemClock.sleep(150)
-            if (tryConnect(name)) return true
-        }
-        return false
-    }
-
-    private fun tryConnect(name: String): Boolean = try {
-        val s = LocalSocket()
-        s.connect(LocalSocketAddress(name, LocalSocketAddress.Namespace.ABSTRACT))
+        val s = open(context) ?: return false
         socket = s
         reader = s.inputStream.bufferedReader()
         writer = s.outputStream.bufferedWriter()
-        true
+        return true
+    }
+
+    /** A connection of its own to the helper, which is started if it doesn't run; null when it won't start. */
+    fun open(context: Context): LocalSocket? {
+        // One socket per app version, so an updated app never talks to an old helper.
+        val name = "thor_companion_input_" + context.packageManager
+            .getPackageInfo(context.packageName, 0).longVersionCode
+        tryConnect(name)?.let { return it }
+        val apk = RootShell.quote(context.applicationInfo.sourceDir)
+        val uid = android.os.Process.myUid()
+        synchronized(this) {
+            tryConnect(name)?.let { return it }
+            RootShell.exec(
+                "CLASSPATH=$apk nohup app_process /system/bin thor.companion.InputHelper $uid $name >/dev/null 2>&1 &"
+            ) ?: return null
+            val until = SystemClock.uptimeMillis() + 5000
+            while (SystemClock.uptimeMillis() < until) {
+                SystemClock.sleep(150)
+                tryConnect(name)?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun tryConnect(name: String): LocalSocket? = try {
+        LocalSocket().apply { connect(LocalSocketAddress(name, LocalSocketAddress.Namespace.ABSTRACT)) }
     } catch (e: java.io.IOException) {
-        false
+        null
     }
 
     private fun close() {

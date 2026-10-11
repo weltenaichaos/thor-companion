@@ -7,7 +7,16 @@ import java.io.File
 
 /** Item icons taken off the game's screen (Icons.lua), one PNG per item, kept across restarts. */
 class IconStore(context: Context) {
-    private val dir = File(context.filesDir, "icons").apply { mkdirs() }
+    private val dir = File(context.filesDir, "icons").apply {
+        // Once: icons taken before 0.22.2 may be bits of the world (the grid had gone before
+        // the screenshot). The addon shows them all again by itself.
+        val prefs = context.getSharedPreferences("icons", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("redone", false)) {
+            deleteRecursively()
+            prefs.edit().putBoolean("redone", true).apply()
+        }
+        mkdirs()
+    }
     private val cache = HashMap<Int, Bitmap?>()
 
     private fun file(id: Int) = File(dir, "$id.png")

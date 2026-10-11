@@ -151,7 +151,16 @@ end
 chatOwner:RegisterEvent("PLAYER_LOGIN")
 chatOwner:RegisterEvent("PLAYER_REGEN_ENABLED")
 chatOwner:SetScript("OnEvent", function(_, event)
-    if event == "PLAYER_LOGIN" then hookEditBoxes() end
+    if event == "PLAYER_LOGIN" then
+        hookEditBoxes()
+        -- 0.20.1 to 0.21.5 switched on the game's chat log (Logs/WoWChatLog.txt) for the
+        -- app to read; the game writes it only every few minutes, so the chat is back on
+        -- the square. Switched off again, once (a /chatlog of your own after that stays).
+        if ThorCompanionDB and not ThorCompanionDB.chatLogOff then
+            pcall(LoggingChat, false)
+            ThorCompanionDB.chatLogOff = true
+        end
+    end
     if event == "PLAYER_LOGIN" or chatPending then ns.BindWhispers() end
 end)
 
@@ -254,6 +263,14 @@ function ns.ChatPayload(again, peek)
     end
     if not peek then sentChannels = chans end
     return head .. "\n" .. table.concat(out, "\n")
+end
+
+-- Whether there are lines the app hasn't been sent yet.
+function ns.ChatPending()
+    for _, l in ipairs(lines) do
+        if (sends[l[1]] or 0) < (l[2] == "channel" and 1 or SENDS) then return true end
+    end
+    return false
 end
 
 -- For /thor chat channels on|off.

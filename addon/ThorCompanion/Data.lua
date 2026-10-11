@@ -1,10 +1,13 @@
 -- Data.lua
 -- Collects non-secret, out-of-combat-safe state and hands it to the strip.
 -- Several kinds of message, checked every half second, each sent only when it changed:
---   TS1|name|level|copper|mapID|x|y|facing|session|bagHash|version  (small, changes while walking)
+--   TS1|name|level|copper|mapID|x|y|facing|session|bagHash|version|sums  (small, changes while walking)
 --   (session: changes with every login or /reload; bagHash: a checksum of the last TB1, so
 --   an app that kept the bags from before knows at once whether they are still right;
---   version: this addon's, so the app can tell when the game still runs an older one)
+--   version: this addon's, so the app can tell when the game still runs an older one;
+--   sums: the same checksum for the last map, character, gear, quests, spells and quest
+--   pages sent, "5:h,6:h,7:h,8:h,10:h,11:h" by kind (0 = not sent yet this session), so
+--   the app's start-up card knows which of the data it kept is still right)
 --   TB1|free/total|itemID:count:key,itemID:count:key,...    (the bags)
 --   TC2|now|itemID:readyAt,...                                (bag items on cooldown, in GetTime() seconds)
 --   TE1|n|open (or closed)                                    (whether the chat box opened, see Chat.lua)
@@ -66,6 +69,10 @@ end
 
 local session = tostring(time())
 local bagHash = 0
+-- Checksums of the last payload sent of the kinds the app keeps (see TS1 above).
+local sums = {}
+local SUM_KINDS = { 5, 6, 7, 8, 10, 11 }
+local SUMMED = { [5] = true, [6] = true, [7] = true, [8] = true, [10] = true }
 
 -- The same checksum the app works out (GameState.hash): over the bytes, h = (h * 31 + b) % 65536.
 local function checksum(s)
@@ -90,8 +97,11 @@ local function status()
     -- Facing in radians (0 = north, counter-clockwise), in steps of about 6 degrees.
     local facing = GetPlayerFacing and plain(GetPlayerFacing())
     facing = type(facing) == "number" and string.format("%.1f", facing) or ""
-    return string.format("TS1|%s|%s|%d|%d|%.4f|%.4f|%s|%s|%d|%s", tostring(name), tostring(level),
-        GetMoney() or 0, mapID or 0, x or 0, y or 0, facing, session, bagHash, addonVersion)
+    sums[11] = ns.QuestPagesSum and ns.QuestPagesSum() or 0
+    local list = {}
+    for _, k in ipairs(SUM_KINDS) do list[#list + 1] = k .. ":" .. (sums[k] or 0) end
+    return string.format("TS1|%s|%s|%d|%d|%.4f|%.4f|%s|%s|%d|%s|%s", tostring(name), tostring(level),
+        GetMoney() or 0, mapID or 0, x or 0, y or 0, facing, session, bagHash, addonVersion, table.concat(list, ","))
 end
 
 local function bags()
@@ -121,9 +131,9 @@ end
 -- next refresh, so the square stays still unless something changes.
 local SENDS = 2
 local REFRESH_TICKS = 600       -- five minutes: state and bags again, for an app started late
-local NAMES_REFRESH_TICKS = 600  -- five minutes: names again, for an app that was reinstalled
 local MAP_REFRESH_TICKS = 120   -- one minute: the map again, so a restarted app is soon up to date
 local MOVE_SECONDS = 0.5         -- while walking, the position is sent at most this often
+local STATUS_AGAIN = 10          -- the status again after this long even when nothing changed, so an app started later soon has it
 local sentCount = {}
 
 -- The next page of names that still need sending, or nil when there are none.
@@ -134,8 +144,13 @@ local function namesPayload(peek)
     local all = {}
     for _, id in ipairs(bagIDs) do all[#all + 1] = id end
     for _, id in ipairs(ns.EquippedIDs()) do all[#all + 1] = id end
+    -- Every name once before any goes the second time, so all are in soon after a login.
+    local limit = SENDS
     for _, id in ipairs(all) do
-        if (sentCount[id] or 0) < SENDS then
+        if (sentCount[id] or 0) == 0 then limit = 1 break end
+    end
+    for _, id in ipairs(all) do
+        if (sentCount[id] or 0) < limit then
             local entry = itemEntry(id)
             if entry then
                 if used + #entry + 1 > room then break end
@@ -274,15 +289,53 @@ function ns.MapUrgent() mapUrgent = true end
 local bagsUrgent = false
 -- A new line from your group, a whisper or the guild goes before everything else.
 local chatUrgent = false
+-- After a loading screen (a login above all) the status goes first: it says which
+-- character this is, and the app keeps nothing else until it knows.
+local statusUrgent = true
+-- Until everything has gone out once after a login (or a Load from the game), the
+-- zone pictures and item icons wait: they hold the square for seconds each.
+local caughtUp, caughtUpBy, picturesAfter = false, 0, 0
+local CATCH_UP_SECONDS = 60
+local statusHold
+-- For a while after a loading screen the status goes out every few seconds: an
+-- app that missed the first one keeps what it reads apart until it knows who is playing.
+local loadedAt = 0
 function ns.ChatUrgent() chatUrgent = true end
 local bagEvents = CreateFrame("Frame")
 bagEvents:RegisterEvent("BAG_UPDATE_DELAYED")
 bagEvents:SetScript("OnEvent", function() bagsUrgent = true end)
 
 local showingTurn
+-- After a loading screen the item names (several long pages for full bags) wait
+-- until every other kind has had its turn once: the app's start-up card waits for
+-- the map, quests and spells, not for the names.
+local namesWait = true
+
+-- The chat waits only for what the start-up card waits for (the turns up to the spells).
+local function chatNow() return caughtUp or not namesWait or GetTime() > caughtUpBy end
+
+-- The kinds sent only when they change (the chat, names and quest pages go twice
+-- by themselves, the status comes every few seconds).
+local COPY_AGAIN = { [2] = true, [5] = true, [6] = true, [7] = true, [8] = true, [9] = true, [10] = true }
+local copyAgain = {}
+
 local function nextMessage()
     local id = C_Map.GetBestMapForUnit("player")
-    if chatUrgent then
+    if statusUrgent then
+        turn = 0  -- the status (1) is next, sent even when it is the same as before
+        statusAt = -STATUS_AGAIN - 1
+        statusUrgent = false
+        statusHold = 1.5  -- long enough for an app that looks once a second
+        bagsUrgent = true -- and the bags right after it
+        namesWait = true
+    elseif GetTime() - loadedAt < 30 and GetTime() - statusAt > 8 then
+        -- The status again soon after loading (see loadedAt), in between: the turns go on where they were.
+        local ok, p = pcall(kinds[1])
+        if ok and p then
+            statusAt, lastSent[1], showingTurn = GetTime(), p, 1
+            return encode(1, p)
+        end
+    elseif chatUrgent and chatNow() then
         turn = 3  -- the chat (4) is next
         chatUrgent = false
     elseif bagsUrgent then
@@ -291,11 +344,17 @@ local function nextMessage()
     elseif mapUrgent or (id and tostring(id) ~= mapID) then
         turn = 4  -- the map (5) is next
         mapForce = mapUrgent
+    elseif lastSent[8] and ns.QuestPagesPending() then
+        turn = 10  -- the rest of the quest log (11) right after its first page
+    elseif showingTurn ~= 4 and chatNow() and ns.ChatPending() then
+        turn = 3  -- lines waiting in a busy chat: every other message is the chat
     end
     mapUrgent = false
     for _ = 1, #kinds do
         turn = turn % #kinds + 1
-        local ok, p = pcall(kinds[turn])
+        local ok, p = true, nil
+        if turn == 10 then namesWait = false end  -- the spells: the last the card waits for
+        if (turn ~= 4 or chatNow()) and (turn ~= 3 or not namesWait) then ok, p = pcall(kinds[turn]) end
         if not ok then p = "TS1|error|" .. tostring(p) end
         -- Every change redraws the square, so a moving position is sent only now and then.
         if turn == 1 and p and lastSent[1] and withoutPosition(p) == withoutPosition(lastSent[1])
@@ -304,13 +363,31 @@ local function nextMessage()
         end
         -- The chat and the quest pages say themselves when they have something to send
         -- (each goes out twice, and the second time can look just like the first).
-        if p and (p ~= lastSent[turn] or turn == 4 or turn == 11) then
+        if p and (p ~= lastSent[turn] or turn == 4 or turn == 11 or (turn == 1 and GetTime() - statusAt > STATUS_AGAIN)) then
             if turn == 1 then statusAt = GetTime() end
+            if COPY_AGAIN[turn] and ns.StripFast() then copyAgain[turn] = true end
             if turn == 5 then mapAt, mapID = GetTime(), p:match("^TM1|(%d+)") end
             lastSent[turn] = p
+            if SUMMED[turn] then sums[turn] = checksum(p) end
             showingTurn = turn
             return encode(turn, p)
         end
+    end
+    -- With the square going round once (/thor speed fast), what went out once goes out
+    -- a second time when nothing else is waiting, for an app that missed a part.
+    for t = 1, #kinds do
+        if copyAgain[t] then
+            copyAgain[t] = nil
+            if lastSent[t] then
+                showingTurn = t
+                known[t] = lastSent[t]
+                return lastSent[t]
+            end
+        end
+    end
+    if not caughtUp then
+        -- Everything is out: the chat goes next, then the pictures may come.
+        caughtUp, chatUrgent, picturesAfter = true, true, GetTime() + 1
     end
     -- Nothing changed: time for the item tooltips the app hasn't got yet.
     local ok, tips = pcall(ns.TooltipsPayload)
@@ -324,6 +401,7 @@ end
 -- reinstalled (its Refresh button presses ALT-SHIFT-F12).
 function ns.SendAllAgain()
     lastSent, chatAgain, sentCount, known = {}, true, {}, {}
+    caughtUp, caughtUpBy = false, GetTime() + CATCH_UP_SECONDS
     ns.TooltipsAgain()
     ns.QuestPagesAgain()
 end
@@ -367,6 +445,8 @@ loadEvents:SetScript("OnEvent", function(_, event)
     else
         loading = false
         quietUntil = GetTime() + 3
+        statusUrgent = true
+        loadedAt = GetTime()
     end
 end)
 local f = CreateFrame("Frame")
@@ -374,14 +454,21 @@ f:RegisterEvent("PLAYER_LOGIN")
 f:SetScript("OnEvent", function()
     ThorCompanionDB = ThorCompanionDB or {}
     ns.StripShow(ThorCompanionDB.hidden ~= true)
-    ticker = C_Timer.NewTicker(0.5, function()
+    caughtUpBy = GetTime() + CATCH_UP_SECONDS
+    -- Ten times a second, so the next message goes up as soon as the last one is done
+    -- (most calls only find the square still busy); the refreshes count half seconds.
+    local sub, idleUntil = 0, 0
+    local overlayUp = false
+    ticker = C_Timer.NewTicker(0.1, function()
         -- Nothing while a loading screen is up, and for a moment after: the game is
         -- busy setting up the zone then, and asking it things is better left alone.
         if loading or GetTime() < quietUntil then return end
-        ticks = ticks + 1
-        if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain, known = {}, true, {} ns.QuestPagesAgain() end
-        if ticks % NAMES_REFRESH_TICKS == 0 then sentCount = {} end
-        if ticks % MAP_REFRESH_TICKS == 0 then lastSent[5], known[5] = nil, nil end
+        sub = sub + 1
+        if sub % 5 == 0 then
+            ticks = ticks + 1
+            if ticks % REFRESH_TICKS == 0 then lastSent, chatAgain, known = {}, true, {} ns.QuestPagesAgain() end
+            if ticks % MAP_REFRESH_TICKS == 0 then lastSent[5], known[5] = nil, nil end
+        end
         -- What came of a tap goes out at once; whatever it cut short is sent again.
         local okOpen, opened = pcall(ns.ChatOpenPayload)
         if okOpen and opened then
@@ -401,22 +488,41 @@ f:SetScript("OnEvent", function()
         if picture then
             if showingTurn and ns.StripBusy() then interrupted(showingTurn) end showingTurn = nil
             ns.StripWrite(picture)
+            overlayUp = true
             return
         end
         local okIcons, icons = pcall(ns.IconsPayload)
         if okIcons and icons then
             if showingTurn and ns.StripBusy() then interrupted(showingTurn) end showingTurn = nil
             ns.StripWrite(icons)
+            overlayUp = true
             return
         end
+        -- The picture or icons just went away: the square must not keep saying where they
+        -- were, or the app may still take a screenshot of what is behind them.
+        if overlayUp then
+            overlayUp = false
+            local ok, p = pcall(kinds[1])
+            if ok and p then
+                statusAt, lastSent[1], showingTurn = GetTime(), p, 1
+                ns.StripWrite(p)
+                return
+            end
+        end
         if ns.StripBusy() then return end
-        -- What the app has no picture of yet comes up by itself, one at a time.
-        local okAuto, shown = pcall(ns.MapPictureAuto)
-        if okAuto and shown then return end
-        okAuto, shown = pcall(ns.IconsAuto)
-        if okAuto and shown then return end
+        -- What the app has no picture of yet comes up by itself, one at a time (not while
+        -- chat lines wait: each picture holds the square for seconds).
+        if (caughtUp and GetTime() > picturesAfter or GetTime() > caughtUpBy + 5) and not ns.ChatPending() then
+            local okAuto, shown = pcall(ns.MapPictureAuto)
+            if okAuto and shown then return end
+            okAuto, shown = pcall(ns.IconsAuto)
+            if okAuto and shown then return end
+        end
+        -- Building every kind to find nothing changed costs: when nothing was, wait half a second.
+        if GetTime() < idleUntil then return end
+        statusHold = nil
         local p = nextMessage()
-        if p then ns.StripWrite(p) end
+        if p then ns.StripWrite(p, statusHold) else idleUntil = GetTime() + 0.45 end
     end)
 end)
 
@@ -447,6 +553,9 @@ SlashCmdList.THORCOMPANION = function(msg)
         setting("cell", cell, 2, 8, "the cell size")
     elseif shadeStep then
         setting("shade", shadeStep, 4, 80, "the shade step")
+    elseif msg == "speed fast" or msg == "speed safe" then
+        ThorCompanionDB.speed = msg:sub(7)
+        print("|cff66ccffForever Companion|r square: " .. (msg == "speed fast" and "fast (every part once)" or "safe (every part twice, slower)"))
     elseif msg == "tips on" or msg == "tips off" then
         ThorCompanionDB.tips = msg == "tips on"
         print("|cff66ccffForever Companion|r item tooltips for the app " .. (msg == "tips on" and "on" or "off"))

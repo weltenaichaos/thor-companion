@@ -16,7 +16,7 @@
 local _, ns = ...
 
 local SECONDS = 5
-local SHORT_SECONDS = 2.5   -- a few new icons: one part, the app reads it at once
+local SHORT_SECONDS = 3.5   -- a few new icons: one part, the app reads it at once
 local AUTO_GAP = 10         -- seconds between two automatic showings
 local SIZE, GAP, COLS = 40, 8, 12
 local PAGE = 60
@@ -172,5 +172,10 @@ end
 keyOwner:RegisterEvent("PLAYER_LOGIN")
 keyOwner:RegisterEvent("PLAYER_REGEN_ENABLED")
 keyOwner:SetScript("OnEvent", function(_, event)
+    -- Once: the app (0.22.2) throws away icons that may have been taken after the grid
+    -- had gone; forgetting which were shown makes them come up again by themselves.
+    if event == "PLAYER_LOGIN" and ThorCompanionDB and not ThorCompanionDB.iconsRedo then
+        ThorCompanionDB.icons, ThorCompanionDB.iconsRedo = nil, true
+    end
     if event == "PLAYER_LOGIN" or keyPending then ns.BindIconKey() end
 end)

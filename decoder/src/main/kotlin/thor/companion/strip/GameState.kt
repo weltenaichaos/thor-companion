@@ -4,7 +4,7 @@ package thor.companion.strip
 data class BagItem(val itemId: Int, val count: Int, val key: Int? = null)
 
 /**
- * What the addon reports, put together from its `TS1|name|level|copper|mapID|x|y[|facing|session|bagHash|version]` and
+ * What the addon reports, put together from its `TS1|name|level|copper|mapID|x|y[|facing|session|bagHash|version|sums]` and
  * `TB1|free/total|itemID:count[:key],...` messages (see addon/ThorCompanion/Data.lua).
  * Values the game keeps secret arrive as "?" and come out as null.
  */
@@ -26,6 +26,13 @@ data class GameState(
     val bagHash: Int? = null,
     /** The addon's version, from its .toc; null from older addons, which didn't send it. */
     val addonVersion: String? = null,
+    /**
+     * The checksum of the last message of each kind the addon sent this session, by
+     * its kind number (5 map, 6 character, 7 gear, 8 quests, 10 spells, 11 the quest
+     * pages after the first, all together); 0 for one not sent yet. Null from addons
+     * before 0.18.7, which didn't send them.
+     */
+    val sums: Map<Int, Int>? = null,
 ) {
     val gold: Long? get() = copper?.div(10000)
     val silver: Long? get() = copper?.div(100)?.rem(100)
@@ -68,7 +75,16 @@ data class GameState(
             session = f.getOrNull(i + 7)?.takeIf { it.isNotEmpty() },
             bagHash = f.getOrNull(i + 8)?.toIntOrNull()?.takeIf { it != 0 },
             addonVersion = if (f[0] == "TS1") f.getOrNull(i + 9)?.takeIf { it.isNotEmpty() } else null,
+            sums = if (f[0] == "TS1") f.getOrNull(i + 10)?.takeIf { it.isNotEmpty() }?.let { sums(it) } else null,
         )
+
+        /** "5:123,6:456" as a map from kind to checksum. */
+        private fun sums(field: String): Map<Int, Int> = field.split(',').mapNotNull { e ->
+            val p = e.split(':')
+            val k = p.getOrNull(0)?.toIntOrNull() ?: return@mapNotNull null
+            val v = p.getOrNull(1)?.toIntOrNull() ?: return@mapNotNull null
+            k to v
+        }.toMap()
 
         private fun bags(base: GameState, slotField: String, list: String): GameState {
             val slots = slotField.split('/')

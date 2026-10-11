@@ -19,12 +19,15 @@ import android.view.KeyEvent
  *   K <display> <keycode> [<keycode>...]   one press: modifiers down, last key down/up, modifiers up
  *   T <display> <text as UTF-8 hex>        types the text, as a keyboard would (for the chat box)
  *   Q                                      ends the helper (the app's close button)
- * Each command answers "OK" or "ERR <reason>". It exits after 30 idle minutes.
+ *   W [<game folder>]                      this connection then only reports what the game does ([GameFiles])
+ * Each other command answers "OK" or "ERR <reason>". It exits after 30 idle minutes
+ * (not while the app is following the game).
  */
 object InputHelper {
     private const val IDLE_EXIT_MS = 30 * 60 * 1000L
 
     @Volatile private var lastUse = 0L
+    private val watching = java.util.concurrent.atomic.AtomicInteger()
 
     @JvmStatic
     fun main(args: Array<String>) {
@@ -39,7 +42,7 @@ object InputHelper {
         Thread {
             while (true) {
                 Thread.sleep(60_000)
-                if (SystemClock.uptimeMillis() - lastUse > IDLE_EXIT_MS) System.exit(0)
+                if (watching.get() == 0 && SystemClock.uptimeMillis() - lastUse > IDLE_EXIT_MS) System.exit(0)
             }
         }.apply { isDaemon = true }.start()
 
@@ -52,12 +55,23 @@ object InputHelper {
             Thread {
                 socket.use { s ->
                     val out = s.outputStream.bufferedWriter()
-                    s.inputStream.bufferedReader().forEachLine { line ->
+                    var files: GameFiles? = null
+                    try { s.inputStream.bufferedReader().forEachLine { line ->
                         lastUse = SystemClock.uptimeMillis()
+                        if (line.startsWith("W")) {
+                            if (files == null) watching.incrementAndGet()
+                            files?.stop()
+                            files = GameFiles(out, line.substringAfter(' ', "").trim().ifEmpty { null })
+                            return@forEachLine
+                        }
                         val reply = try { handle(line) } catch (t: Throwable) { "ERR ${t.javaClass.simpleName}: ${t.message}" }
                         out.write(reply + "\n")
                         out.flush()
                         if (line.trim() == "Q") System.exit(0)
+                    } } catch (e: java.io.IOException) {
+                        // The app went away.
+                    } finally {
+                        if (files != null) { files?.stop(); watching.decrementAndGet() }
                     }
                 }
             }.start()

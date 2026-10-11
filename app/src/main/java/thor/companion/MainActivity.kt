@@ -118,6 +118,13 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A crash leaves its cause in a file, shown once at the next start (so it can be reported).
+        val crashFile = java.io.File(filesDir, "crash.txt")
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            runCatching { crashFile.writeText(android.util.Log.getStackTraceString(e).take(4000)) }
+            previous?.uncaughtException(t, e)
+        }
         // Taps here must not take the key focus (or the controller) away from the game.
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
         screen = TopScreen(this)
@@ -198,6 +205,16 @@ class MainActivity : Activity() {
         show(Panel.BAGS)
         updateCompass()
         say("Looking for the game…")
+        // The last crash, once: its first lines, to send along.
+        if (crashFile.exists()) {
+            val trace = runCatching { crashFile.readText() }.getOrDefault("")
+            crashFile.delete()
+            if (trace.isNotBlank()) android.app.AlertDialog.Builder(this)
+                .setTitle("The app crashed last time")
+                .setMessage(trace.lines().take(12).joinToString("\n"))
+                .setPositiveButton("OK", null)
+                .show()
+        }
     }
 
     private var closeAskedAt = -10_000L
@@ -242,6 +259,16 @@ class MainActivity : Activity() {
     @Deprecated("The plain Activity's way; this app has no AndroidX.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == VOICE_WINDOW) {
+            voiceOpen = false
+            val words = data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim()
+            val field = micFor?.first
+            if (resultCode != RESULT_OK || words.isNullOrEmpty() || field == null || composing == null) { say("No text from the voice window"); return }
+            field.setText(listOf(field.text.toString().trimEnd(), words).filter { it.isNotEmpty() }.joinToString(" ").take(255))
+            field.setSelection(field.text.length)
+            say("Check the text, then tap Send")
+            return
+        }
         if (requestCode != CHOOSE_KIT || resultCode != RESULT_OK) return
         val path = data?.data?.let { AddonInstaller.pathOf(it) }
             // The AddOns folder itself chosen: the Thor-Forever folder is the one around it.
@@ -268,7 +295,8 @@ class MainActivity : Activity() {
     }
 
     override fun onStop() {
-        closeCompose()
+        // The speech app's voice window covers the app for a moment: keep the message open for its text.
+        if (!voiceOpen) closeCompose()
         worker = null
         watcher = null
         runCatching { watchSocket?.close() }
@@ -1886,11 +1914,11 @@ class MainActivity : Activity() {
         }
         val speechIntent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
             putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
         val recognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(this)
         listening = recognizer
+        micFor = field to mic
         mic.background = Theme.box(this, Theme.BAD, 18)
         say("Listening… speak your message")
         fun words(b: android.os.Bundle?) =
@@ -1903,22 +1931,17 @@ class MainActivity : Activity() {
                 stopListening()
             }
             override fun onError(error: Int) {
-                // The language is known but not on the Thor yet: ask the speech app to fetch it.
-                if (error == 13 && android.os.Build.VERSION.SDK_INT >= 33) {
-                    val asked = runCatching { recognizer.triggerModelDownload(speechIntent) }.isSuccess
-                    say(if (asked) "Downloading the speech language for ${Locale.getDefault().displayLanguage}: tap 🎤 again in a minute"
-                        else "The speech language isn't downloaded: Speech Services by Google settings → Languages")
-                    stopListening()
-                    return
-                }
+                if (listening !== recognizer) return
+                stopListening()
+                // 12, 13: the speech app won't do this language here; its own voice window may.
+                if ((error == 12 || error == 13) && voiceWindow()) return
                 say(when (error) {
                     android.speech.SpeechRecognizer.ERROR_NO_MATCH, android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Didn't catch that: tap 🎤 to try again"
                     android.speech.SpeechRecognizer.ERROR_NETWORK, android.speech.SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech recognition needs the internet here"
                     android.speech.SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "The app may not use the microphone (Android settings)"
-                    12, 13 -> "${Locale.getDefault().displayLanguage} isn't available for speech: Speech Services by Google settings → Languages"
+                    12, 13 -> "Speech recognition has no language to use (error $error)"
                     else -> "Speech recognition stopped (error $error)"
                 })
-                stopListening()
             }
             override fun onReadyForSpeech(p: android.os.Bundle?) {}
             override fun onBeginningOfSpeech() {}
@@ -1927,12 +1950,52 @@ class MainActivity : Activity() {
             override fun onEndOfSpeech() { mic.background = Theme.box(this@MainActivity, RAISED, 18) }
             override fun onEvent(type: Int, p: android.os.Bundle?) {}
         })
-        recognizer.startListening(speechIntent)
-        micFor = field to mic
+        fun start(language: String?) {
+            if (listening !== recognizer) return
+            language?.let { speechIntent.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, it) }
+            runCatching { recognizer.startListening(speechIntent) }.onFailure { stopListening(); say("Speech recognition didn't start: ${it.message}") }
+        }
+        // Android 13+: ask which languages it has, and pick the system's (or the nearest one).
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            val asked = runCatching {
+                recognizer.checkRecognitionSupport(speechIntent, mainExecutor, object : android.speech.RecognitionSupportCallback {
+                    override fun onSupportResult(support: android.speech.RecognitionSupport) {
+                        val online = if (android.os.Build.VERSION.SDK_INT >= 34) support.onlineLanguages else emptyList()
+                        start(runCatching { speechLanguage(support.installedOnDeviceLanguages + online) }.getOrNull())
+                    }
+                    override fun onError(error: Int) { start(null) }
+                })
+            }.isSuccess
+            if (!asked) start(null)
+        } else start(null)
     }
 
+    /** The system language if the speech app has it, else the same language from another country, else English. */
+    private fun speechLanguage(have: List<String>): String? {
+        if (have.isEmpty()) return null
+        val system = Locale.getDefault()
+        fun same(tag: String) = Locale.forLanguageTag(tag)
+        return have.firstOrNull { same(it) == system }
+            ?: have.firstOrNull { same(it).language == system.language }
+            ?: have.firstOrNull { it.equals("en-US", true) }
+            ?: have.firstOrNull { same(it).language == "en" }
+            ?: have.first()
+    }
+
+    /** The speech app's own voice window, for when listening here fails; false when there is none. */
+    private fun voiceWindow(): Boolean {
+        val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "Your chat message")
+        voiceOpen = runCatching { @Suppress("DEPRECATION") startActivityForResult(intent, VOICE_WINDOW) }.isSuccess
+        return voiceOpen
+    }
+
+    private var voiceOpen = false
+
     private fun stopListening() {
-        listening?.let { runCatching { it.cancel() }; runCatching { it.destroy() } }
+        // Destroyed after the callback that stopped it has returned, not inside it.
+        listening?.let { r -> runCatching { r.cancel() }; footer.post { runCatching { r.destroy() } } }
         listening = null
         micFor?.second?.background = Theme.box(this, RAISED, 18)
     }
@@ -2319,6 +2382,7 @@ class MainActivity : Activity() {
 
     private companion object {
         const val MIC_PERMISSION = 7
+        const val VOICE_WINDOW = 8
         /** Message kinds kept across restarts. */
         /** After the square last changed, how long the app keeps reading five times a second (the addon assumes 2.5 s). */
         const val BUSY_MS = 3000L

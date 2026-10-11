@@ -1875,7 +1875,7 @@ class MainActivity : Activity() {
             return
         }
         if (!android.speech.SpeechRecognizer.isRecognitionAvailable(this)) {
-            say("No speech recognition on this device: the keyboard's own microphone key may still work")
+            say("No speech recognition on this device: install Speech Services by Google from the Play Store")
             return
         }
         val before = field.text.toString().trimEnd()

@@ -1926,6 +1926,7 @@ class MainActivity : Activity() {
         recognizer.setRecognitionListener(object : android.speech.RecognitionListener {
             override fun onPartialResults(b: android.os.Bundle?) { words(b).takeIf { it.isNotBlank() }?.let(::show) }
             override fun onResults(b: android.os.Bundle?) {
+                busyRetried = false
                 val w = words(b)
                 if (w.isNotBlank()) { show(w); say("Check the text, then tap Send") } else say("Didn't catch that: tap 🎤 to try again")
                 stopListening()
@@ -1933,6 +1934,14 @@ class MainActivity : Activity() {
             override fun onError(error: Int) {
                 if (listening !== recognizer) return
                 stopListening()
+                // Busy: the last listener was still closing. Once more, a moment later.
+                if (error == android.speech.SpeechRecognizer.ERROR_RECOGNIZER_BUSY && !busyRetried) {
+                    busyRetried = true
+                    footer.postDelayed({ if (composing != null) listen(field, mic) }, 700)
+                    return
+                }
+                busyRetried = false
+                if (error == android.speech.SpeechRecognizer.ERROR_RECOGNIZER_BUSY && voiceWindow()) return
                 // 12, 13: the speech app won't do this language here; its own voice window may.
                 if ((error == 12 || error == 13) && voiceWindow()) return
                 say(when (error) {
@@ -1955,20 +1964,38 @@ class MainActivity : Activity() {
             language?.let { speechIntent.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, it) }
             runCatching { recognizer.startListening(speechIntent) }.onFailure { stopListening(); say("Speech recognition didn't start: ${it.message}") }
         }
-        // Android 13+: ask which languages it has, and pick the system's (or the nearest one).
-        if (android.os.Build.VERSION.SDK_INT >= 33) {
+        // Android 13+: ask once which languages it has (with a recognizer of its own: one
+        // that is still answering that is "busy"), and pick the system's or the nearest one.
+        if (android.os.Build.VERSION.SDK_INT >= 33 && !speechChecked) {
+            val checker = android.speech.SpeechRecognizer.createSpeechRecognizer(this)
+            var answered = false
+            fun go(language: String?) {
+                if (answered) return
+                answered = true
+                speechChecked = true
+                speechLang = language
+                footer.post { runCatching { checker.destroy() } }
+                footer.postDelayed({ start(language) }, 300)
+            }
             val asked = runCatching {
-                recognizer.checkRecognitionSupport(speechIntent, mainExecutor, object : android.speech.RecognitionSupportCallback {
+                checker.checkRecognitionSupport(speechIntent, mainExecutor, object : android.speech.RecognitionSupportCallback {
                     override fun onSupportResult(support: android.speech.RecognitionSupport) {
                         val online = if (android.os.Build.VERSION.SDK_INT >= 34) support.onlineLanguages else emptyList()
-                        start(runCatching { speechLanguage(support.installedOnDeviceLanguages + online) }.getOrNull())
+                        go(runCatching { speechLanguage(support.installedOnDeviceLanguages + online) }.getOrNull())
                     }
-                    override fun onError(error: Int) { start(null) }
+                    override fun onError(error: Int) { go(null) }
                 })
             }.isSuccess
-            if (!asked) start(null)
-        } else start(null)
+            if (!asked) go(null)
+            // No answer at all: listen without choosing.
+            footer.postDelayed({ go(null) }, 3000)
+        } else start(speechLang)
     }
+
+    /** The language picked for speech (null: the speech app's own), asked once per app start. */
+    private var speechChecked = false
+    private var speechLang: String? = null
+    private var busyRetried = false
 
     /** The system language if the speech app has it, else the same language from another country, else English. */
     private fun speechLanguage(have: List<String>): String? {

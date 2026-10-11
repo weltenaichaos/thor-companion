@@ -11,7 +11,7 @@ android {
         applicationId = "thor.companion"
         minSdk = 30
         targetSdk = 34
-        versionCode = 78
+        versionCode = 79
         versionName = "0.23.1"
     }
 

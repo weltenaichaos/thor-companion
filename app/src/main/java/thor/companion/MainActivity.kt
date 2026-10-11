@@ -177,7 +177,7 @@ class MainActivity : Activity() {
             ellipsize = android.text.TextUtils.TruncateAt.END
             setPadding(dp(8), 0, dp(8), 0)
             // Long-press: the battery check (how much reading the game's screen costs), and
-            // the Thor's recent log saved next to the kit, to send along when something goes wrong.
+            // the Thor's recent log saved in Download, to send along when something goes wrong.
             setOnLongClickListener { say(captureStats()); saveLog(); true }
         }
         loadButton = chip("Load from the game") {
@@ -2133,12 +2133,12 @@ class MainActivity : Activity() {
         }
     }
 
-    /** The Thor's recent log (this app, the speech service, the game's input) into Download/Thor-Forever, through root. */
+    /** The Thor's recent log (this app, the speech service, the game's input) into Download, through root. */
     private fun saveLog() {
         keys.execute {
-            val out = "/sdcard/Download/Thor-Forever/companion-log.txt"
+            val out = "/sdcard/Download/ForeverCompanion-log.txt"
             val ok = RootShell.exec("logcat -d -t 3000 -v time > $out 2>&1; echo done")?.trim() == "done"
-            runOnUiThread { say(if (ok) "Log saved: Download/Thor-Forever/companion-log.txt" else "Log not saved (no root shell)") }
+            runOnUiThread { say(if (ok) "Log saved: Download/ForeverCompanion-log.txt" else "Log not saved (no root shell)") }
         }
     }
 

@@ -479,7 +479,7 @@ class MainActivity : Activity() {
                     // While the start-up card shows, each message may tick something off.
                     if (!ready) runOnUiThread { if (!ready) render() }
                 }
-            } else if (++misses == 4 && listening == null && SystemClock.uptimeMillis() >= quietUntil) {
+            } else if (++misses == 4 && !barMode && listening == null && SystemClock.uptimeMillis() >= quietUntil) {
                 near = -1
                 val why = when {
                     px == null -> "the capture failed"
@@ -508,6 +508,7 @@ class MainActivity : Activity() {
             // while it was taken) is read again at the usual pace.
             if (result is StripDecoder.Result.Ok) {
                 absent = 0; seenSquare = true
+                barMode = result.frame.version == StripDecoder.BAR_VERSION
             } else absent++
             // Gone for a few seconds: logged out, the character screen or a loading screen.
             // The card stands in for the tabs until the game says again who is playing,
@@ -519,7 +520,9 @@ class MainActivity : Activity() {
             // While the microphone listens (and a little after), the game may stand still: the
             // speech service takes the sound, and the game can pause for that. Not "gone".
             val speaking = listening != null || SystemClock.uptimeMillis() < quietUntil
-            if ((absent == 3 && seenSquare || stale) && !away && !speaking) {
+            // The colour bar is only there while something is sent: its absence says nothing
+            // (the status comes every 10 s, so "stale" still notices a game that is gone).
+            if ((absent == 3 && seenSquare && !barMode || stale) && !away && !speaking) {
                 away = true
                 awaitStatus = true
                 fresh.clear()
@@ -531,6 +534,8 @@ class MainActivity : Activity() {
                 game == Game.CLOSED && result !is StripDecoder.Result.Ok -> 30_000L
                 game == Game.STARTING && result !is StripDecoder.Result.Ok -> 10_000L
                 absent > 0 && !seenSquare -> 10_000L
+                // The bar comes and goes: look once a second for the next message.
+                barMode && absent > 0 -> 1000L
                 absent in 1..4 -> 1000L
                 absent == 5 -> 10_000L
                 absent > 5 -> 5000L
@@ -1887,6 +1892,9 @@ class MainActivity : Activity() {
     private fun saveQuickReplies(list: List<String>) {
         getPreferences(MODE_PRIVATE).edit().putString("quickReplies", list.joinToString("\n")).apply()
     }
+
+    /** The addon sends with the colour bar (there only while sending), not the dark square. */
+    @Volatile private var barMode = false
 
     /** Speech to text for the message being written (null: not listening). */
     @Volatile private var listening: android.speech.SpeechRecognizer? = null

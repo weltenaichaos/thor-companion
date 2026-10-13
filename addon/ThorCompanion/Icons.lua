@@ -140,7 +140,7 @@ function ns.IconsPayload()
     if not sl or not cl then return nil end
     local r = function(v) return math.floor(v + 0.5) end
     local head = string.format("TI1|%d|%d|%d|%d|%d|%d|", r(cl - sl + GAP * k), r(st - ct + GAP * k),
-        r(SIZE * k), r((SIZE + GAP) * k), COLS, (ThorCompanionDB and ThorCompanionDB.cell) or 3)
+        r(SIZE * k), r((SIZE + GAP) * k), COLS, ns.StripCellSize())
     return head .. table.concat(shownIDs, ",")
 end
 

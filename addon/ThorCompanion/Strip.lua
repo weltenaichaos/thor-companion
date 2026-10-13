@@ -16,6 +16,11 @@
 -- A message longer than one square is split into parts that are shown in turn
 -- (twice after it changes, then the square stays still); the app puts them back
 -- together. The companion app decodes this from a capture of the top screen.
+--
+-- The default (/thor shape bar): a thin colour bar, BAR_COLS x BAR_ROWS cells, that is only
+-- there while something is being sent. Same sync cells and calibration (in grey), but
+-- every other cell carries 6 bits: 2 in each of red, green and blue (four levels each),
+-- so 3 bytes take 4 cells. Header version BAR_VERSION.
 
 local _, ns = ...
 
@@ -24,6 +29,10 @@ local VERSION = 4
 local CALIB = 8
 local PART_BYTES = math.floor(((COLS - 1) * COLS - CALIB) / 4) - 4 - 2   -- 87
 local MAX_PARTS = 6
+local BAR_COLS, BAR_ROWS = 80, 3
+local BAR_VERSION = 5
+local BAR_PART_BYTES = math.floor((BAR_COLS * BAR_ROWS - COLS - CALIB) * 6 / 8) - 4 - 2   -- 153
+local BAR_IDLE = 1.5   -- seconds after the last part before the bar goes away
 -- Two ways to go round (/thor speed fast|safe):
 --  safe: every part 0.35 s, all parts twice; every message stays at least 1.5 s.
 --  fast: every part 0.45 s, once. While messages follow each other (one went up in
@@ -50,9 +59,19 @@ local function lineShape()
     return ThorCompanionDB and ThorCompanionDB.shape == "line"
 end
 
+-- The bar is the default; /thor shape square brings back the dark square.
+local function barShape()
+    return not ThorCompanionDB or ThorCompanionDB.shape == nil or ThorCompanionDB.shape == "bar"
+end
+
+local function partBytes() return barShape() and BAR_PART_BYTES or PART_BYTES end
+
 local function settings()
     local db = ThorCompanionDB or {}
-    return db.cell or 3, db.shade or 24, db.right or 0, db.top or (lineShape() and 0 or 22)
+    -- The bar's colours blur into each other below 3 pixels a cell.
+    local cell = db.cell or 3
+    if barShape() and cell < 3 then cell = 3 end
+    return cell, db.shade or 24, db.right or 0, db.top or ((lineShape() or barShape()) and 0 or 22)
 end
 
 local function shade(level)
@@ -64,6 +83,21 @@ end
 local function setCell(i, level)
     local t = cells[i]
     if t then t:SetColorTexture(shade(level)) t:SetAlpha(1) end
+end
+
+-- The bar: colour. Levels stop at 0.6: the Thor mixes the channels (pure green shows
+-- with a lot of red), and brighter colours would clip, which the app can't undo.
+local LEVEL = { [0] = 0, 0.2, 0.4, 0.6 }
+local function setGrey(i, level)
+    local t = cells[i]
+    if t then local v = LEVEL[level] t:SetColorTexture(v, v, v) t:SetAlpha(1) end
+end
+local function setColour(i, v)
+    local t = cells[i]
+    if t then
+        t:SetColorTexture(LEVEL[bit.band(bit.rshift(v, 4), 3)], LEVEL[bit.band(bit.rshift(v, 2), 3)], LEVEL[bit.band(v, 3)])
+        t:SetAlpha(1)
+    end
 end
 
 local function crc16(s)
@@ -86,8 +120,9 @@ local function place()
     local _, h = GetPhysicalScreenSize()
     -- Ignoring the UI scale, with this scale 1 unit = 1 physical pixel.
     frame:SetScale(768 / h)
-    local perRow = lineShape() and COLS * COLS or COLS
-    frame:SetSize(perRow * cell, COLS * COLS / perRow * cell)
+    local perRow = barShape() and BAR_COLS or lineShape() and COLS * COLS or COLS
+    local count = barShape() and BAR_COLS * BAR_ROWS or COLS * COLS
+    frame:SetSize(perRow * cell, count / perRow * cell)
     frame:ClearAllPoints()
     frame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -right, -top)
     for i = 0, COLS * COLS - 1 do
@@ -95,11 +130,40 @@ local function place()
         t:SetSize(cell, cell)
         t:ClearAllPoints()
         t:SetPoint("TOPLEFT", frame, "TOPLEFT", (i % perRow) * cell, -math.floor(i / perRow) * cell)
+        t:SetShown(i < count)
     end
+end
+
+-- The bar's part: sync and calibration in grey, then 6 bits per cell.
+local function drawBar(index)
+    local body = parts[index]
+    local head = string.char(BAR_VERSION, msgSeq, (index - 1) * 16 + (#parts - 1), #body)
+    local bytes = head .. body
+    local crc = crc16(bytes)
+    bytes = bytes .. string.char(bit.rshift(crc, 8), bit.band(crc, 255))
+    for c = 0, COLS - 1 do setGrey(c, c % 2 == 0 and 3 or 0) end
+    -- Calibration: grey 0..3, then red, green and blue at full level, then black,
+    -- so the app can work out how the screen mixes the colours.
+    local i = COLS
+    for c = 0, 3 do setGrey(i, c) i = i + 1 end
+    setColour(i, 48) setColour(i + 1, 12) setColour(i + 2, 3) setGrey(i + 3, 0)
+    i = i + 4
+    -- Whole groups of 3 bytes (24 bits) into 4 cells; the last group padded with zeros.
+    for p = 1, #bytes, 3 do
+        local a, b, c = bytes:byte(p), bytes:byte(p + 1) or 0, bytes:byte(p + 2) or 0
+        local v = a * 65536 + b * 256 + c
+        for s = 3, 0, -1 do setColour(i, bit.band(bit.rshift(v, s * 6), 63)) i = i + 1 end
+    end
+    for j = i, BAR_COLS * BAR_ROWS - 1 do setColour(j, 0) end
 end
 
 -- Draws one part: the sync row, calibration, header, payload and checksum.
 local function draw(index)
+    if barShape() then
+        drawBar(index)
+        if frame then frame:SetAlpha(1) end
+        return
+    end
     local body = parts[index]
     local head = string.char(VERSION, msgSeq, (index - 1) * 16 + (#parts - 1), #body)
     local bytes = head .. body
@@ -113,6 +177,15 @@ local function draw(index)
         for s = 3, 0, -1 do setCell(i, bit.band(bit.rshift(b, s * 2), 3)) i = i + 1 end
     end
     for j = i, COLS * COLS - 1 do setCell(j, 0) end
+end
+
+-- The bar goes away when nothing is being sent (the square stays, as it always did).
+-- Made see-through rather than hidden: the pictures still measure from its place.
+local function idleCheck()
+    if frame and barShape() and frame:GetAlpha() > 0 and not (#parts > 1 and rounds > 0)
+        and GetTime() - lastDrawAt > BAR_IDLE and GetTime() - shownAt > BAR_IDLE then
+        frame:SetAlpha(0)
+    end
 end
 
 local function build()
@@ -131,6 +204,7 @@ local function build()
     end
     place()
     frame:Show()
+    C_Timer.NewTicker(0.25, idleCheck)
 end
 
 local function step()
@@ -157,6 +231,11 @@ function ns.StripInfo()
         tostring(l), tostring(b), tostring(fw), tostring(fh), cell, shadeStep, right, top)
 end
 
+-- The cell size in use (the bar never goes below 3), for the pictures' positions.
+function ns.StripCellSize()
+    return (settings())
+end
+
 -- The square's frame (for Map.lua, which measures the world map from it).
 function ns.StripFrame()
     if not cells then build() end
@@ -165,12 +244,12 @@ end
 
 -- Largest message in bytes (split over up to MAX_PARTS parts).
 function ns.StripCapacity()
-    return PART_BYTES * MAX_PARTS
+    return PART_BYTES * MAX_PARTS   -- the same for the bar (it needs fewer parts for it)
 end
 
 -- Bytes in one part: a message this short is shown at once, without parts going round.
 function ns.StripPartBytes()
-    return PART_BYTES
+    return partBytes()
 end
 
 -- True while a message has not been up for its minimum time, or its parts are still
@@ -197,8 +276,9 @@ function ns.StripWrite(payload, hold)
     message = payload
     msgSeq = (msgSeq + 1) % 256
     parts = {}
-    for p = 1, math.max(1, math.ceil(#payload / PART_BYTES)) do
-        parts[p] = payload:sub((p - 1) * PART_BYTES + 1, p * PART_BYTES)
+    local size = partBytes()
+    for p = 1, math.max(1, math.ceil(#payload / size)) do
+        parts[p] = payload:sub((p - 1) * size + 1, p * size)
     end
     local sp = speed()
     local now = GetTime()
@@ -217,6 +297,8 @@ function ns.StripRefresh()
     if not cells then build() return end
     place()
     if message then draw(part) end
+    -- The square is always there; the bar only while it sends.
+    if not barShape() then frame:SetAlpha(1) end
 end
 
 function ns.StripShow(show)

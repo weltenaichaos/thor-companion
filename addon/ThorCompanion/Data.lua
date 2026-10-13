@@ -545,10 +545,12 @@ SlashCmdList.THORCOMPANION = function(msg)
     if right then
         setting("right", right, 0, 2000, "the distance from the right edge")
         setting("top", top, 0, 1200, "the distance from the top edge")
-    elseif msg == "shape line" or msg == "shape square" then
+    elseif msg == "shape line" or msg == "shape square" or msg == "shape bar" then
         ThorCompanionDB.shape = msg:sub(7)
         ThorCompanionDB.top = nil  -- each shape has its own default place
         ns.StripRefresh()
+        print("|cff66ccffForever Companion|r data shown as " .. (msg == "shape bar" and "a thin colour bar while something is sent"
+            or msg == "shape square" and "the dark square" or "a dark line") .. " (the app follows by itself)")
     elseif cell then
         setting("cell", cell, 2, 8, "the cell size")
     elseif shadeStep then

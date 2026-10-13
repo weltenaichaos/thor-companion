@@ -64,6 +64,9 @@ object StripDecoder {
         val found = (if (near >= 0) findSquare(px, near - 16, near + 16) else null)
             ?: findSquare(px, 0, SCAN_ROWS)
         val (x0, y0, cell) = found ?: return Result.Failed("data square not found")
+        // The colour bar (the addon's default) first, then the dark line and square.
+        val bar = decodeBar(px, x0, y0, cell)
+        if (bar is Result.Ok && bar.frame.crcOk) return bar
         // The line's cells go on along the sync row; the square's wrap after COLS.
         val line = decodeAt(px, x0, y0, cell, COLS * COLS)
         if (line is Result.Ok && line.frame.crcOk) return line
@@ -114,6 +117,91 @@ object StripDecoder {
                 row = y0,
                 x = x0,
             )
+        )
+    }
+
+    const val BAR_VERSION = 5
+    const val BAR_COLS = 80
+    const val BAR_ROWS = 3
+
+    /**
+     * The colour bar: BAR_COLS x BAR_ROWS cells, the same sync cells, then calibration
+     * (grey 0..3, red, green, blue at level 3, black) and 6 bits per cell, 2 per colour.
+     * The screen mixes the colours (red shows in green and so on), so the calibration's
+     * pure colours give the mix, and each cell is unmixed before it is read.
+     */
+    private fun decodeBar(px: Pixels, x0: Double, y0: Int, cell: Double): Result {
+        fun colour(i: Int): Int {
+            val x = (x0 + (i % BAR_COLS + 0.5) * cell).toInt().coerceIn(0, px.width - 1)
+            val y = (y0 + (i / BAR_COLS) * cell).roundToInt().coerceIn(0, px.height - 1)
+            return px.rgb(x, y)
+        }
+        fun rgb(c: Int) = doubleArrayOf((c shr 16 and 0xFF).toDouble(), (c shr 8 and 0xFF).toDouble(), (c and 0xFF).toDouble())
+        val k = COLS
+        val black = rgb(average(colour(k), colour(k + 7)))
+        // Columns of the mix: what full red, green and blue each add to black.
+        val m = Array(3) { row -> DoubleArray(3) { col -> rgb(colour(k + 4 + col))[row] - black[row] } }
+        val inv = invert(m) ?: return Result.Failed("bar colours not told apart")
+        fun unmix(c: Int): DoubleArray {
+            val v = rgb(c)
+            val d = DoubleArray(3) { v[it] - black[it] }
+            return DoubleArray(3) { r -> 3 * (inv[r][0] * d[0] + inv[r][1] * d[1] + inv[r][2] * d[2]) }
+        }
+        // Where each grey level lands per channel once unmixed (the screen isn't linear).
+        val greys = Array(4) { unmix(colour(k + it)) }
+        fun sym(i: Int): Int {
+            val u = unmix(colour(i))
+            var out = 0
+            for (ch in 0 until 3) {
+                var best = 0
+                for (lv in 1 until 4) if (abs(u[ch] - greys[lv][ch]) < abs(u[ch] - greys[best][ch])) best = lv
+                out = (out shl 2) or best
+            }
+            return out
+        }
+        val first = COLS + CALIB
+        val groups = (BAR_COLS * BAR_ROWS - first) / 4
+        val bytes = ByteArray(groups * 3)
+        for (g in 0 until groups) {
+            val i = first + g * 4
+            val v = (sym(i) shl 18) or (sym(i + 1) shl 12) or (sym(i + 2) shl 6) or sym(i + 3)
+            bytes[g * 3] = (v shr 16).toByte(); bytes[g * 3 + 1] = (v shr 8).toByte(); bytes[g * 3 + 2] = v.toByte()
+        }
+        val head = bytes.copyOfRange(0, 4)
+        if ((head[0].toInt() and 0xFF) != BAR_VERSION) return Result.Failed("not the bar")
+        val length = head[3].toInt() and 0xFF
+        if (4 + length + 2 > bytes.size) return Result.Failed("bad length $length")
+        val body = bytes.copyOfRange(4, 4 + length)
+        val crc = ((bytes[4 + length].toInt() and 0xFF) shl 8) or (bytes[5 + length].toInt() and 0xFF)
+        val partByte = head[2].toInt() and 0xFF
+        var spread = Double.MAX_VALUE
+        for (p in 0 until 4) for (q in p + 1 until 4) for (ch in 0 until 3) spread = minOf(spread, abs(greys[p][ch] - greys[q][ch]))
+        return Result.Ok(
+            StripFrame(
+                version = BAR_VERSION,
+                seq = head[1].toInt() and 0xFF,
+                part = partByte shr 4,
+                parts = (partByte and 15) + 1,
+                crcOk = crc == crc16(head + body),
+                payload = body,
+                shadeMinDistance = spread,
+                cellPx = cell,
+                row = y0,
+                x = x0,
+            )
+        )
+    }
+
+    private fun invert(m: Array<DoubleArray>): Array<DoubleArray>? {
+        val a = m[0][0]; val b = m[0][1]; val c = m[0][2]
+        val d = m[1][0]; val e = m[1][1]; val f = m[1][2]
+        val g = m[2][0]; val h = m[2][1]; val i = m[2][2]
+        val det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+        if (abs(det) < 1e-6) return null
+        return arrayOf(
+            doubleArrayOf((e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det),
+            doubleArrayOf((f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det),
+            doubleArrayOf((d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det),
         )
     }
 

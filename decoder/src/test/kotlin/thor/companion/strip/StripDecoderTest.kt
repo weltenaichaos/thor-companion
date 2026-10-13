@@ -98,6 +98,72 @@ class StripDecoderTest {
         assertIs<StripDecoder.Result.Failed>(StripDecoder.decode(px))
     }
 
+    /** Drawn by the real Strip.lua (bar.lua mock, top-right 400x24 game pixels), then shown like on the Thor. */
+    @Test
+    fun decodesTheColourBarDrawnByTheAddon() {
+        val img = javax.imageio.ImageIO.read(javaClass.getResourceAsStream("/addon-bar-v5.png"))
+        val game = img.getRGB(0, 0, img.width, img.height, null, 0, img.width).map { it and 0xFFFFFF }.toIntArray()
+        val sw = img.width * 3 / 2; val sh = img.height * 3 / 2
+        val px = ArrayPixels(sw, sh, IntArray(sw * sh) { idx -> shift(bilinear(game, img.width, img.height, (idx % sw) / 1.5, (idx / sw) / 1.5)) })
+        val frame = decodeOk(px)
+        assertTrue(frame.crcOk)
+        assertEquals(StripDecoder.BAR_VERSION, frame.version)
+        assertEquals("TS1|Xandra|5|40912|1420|0.3187|0.6556|bar test with a longer payload 0123456789 ÄÖÜ", String(frame.payload))
+    }
+
+    @Test
+    fun decodesTheColourBarThroughThorLikeDisplay() {
+        val payload = ("TB1|3/98|" + (1..40).joinToString(",") { "${it * 1000}:$it:$it" }).take(153)
+        val frame = decodeOk(renderBar(payload.toByteArray(), seq = 42))
+        assertTrue(frame.crcOk)
+        assertEquals(StripDecoder.BAR_VERSION, frame.version)
+        assertEquals(payload, String(frame.payload))
+        assertEquals(42, frame.seq)
+        assertTrue(frame.row < 6, "the bar sits at the very top")
+    }
+
+    @Test
+    fun decodesTheColourBarWithBigCellsAndUnicode() {
+        val payload = "TS1|Ünïcode|60|1234567|1453|0.5000|0.2500"
+        val frame = decodeOk(renderBar(payload.toByteArray(), seq = 3, cell = 4))
+        assertTrue(frame.crcOk)
+        assertEquals(payload, String(frame.payload))
+    }
+
+    /** Draws the bar the way Strip.lua does (top right, top edge), then through the Thor-like display. */
+    private fun renderBar(body: ByteArray, seq: Int, cell: Int = 3): Pixels {
+        val gw = 1280; val gh = 720; val cols = StripDecoder.BAR_COLS; val rows = StripDecoder.BAR_ROWS
+        val rnd = Random(seq)
+        val game = IntArray(gw * gh) {
+            val v = rnd.nextInt(10, 120)
+            (v shl 16) or ((v + rnd.nextInt(0, 40)) shl 8) or (v / 2)
+        }
+        val head = byteArrayOf(StripDecoder.BAR_VERSION.toByte(), seq.toByte(), 0, body.size.toByte())
+        val crc = StripDecoder.crc16(head + body)
+        val bytes = head + body + byteArrayOf((crc shr 8).toByte(), crc.toByte())
+        val level = intArrayOf(0, 51, 102, 153)
+        fun grey(l: Int) = (level[l] shl 16) or (level[l] shl 8) or level[l]
+        fun colour(v: Int) = (level[v shr 4 and 3] shl 16) or (level[v shr 2 and 3] shl 8) or level[v and 3]
+        val cells = IntArray(cols * rows) { colour(0) }
+        for (c in 0 until StripDecoder.COLS) cells[c] = grey(if (c % 2 == 0) 3 else 0)
+        var i = StripDecoder.COLS
+        for (c in 0..3) cells[i++] = grey(c)
+        cells[i++] = colour(48); cells[i++] = colour(12); cells[i++] = colour(3); cells[i++] = grey(0)
+        for (p in bytes.indices step 3) {
+            val v = ((bytes[p].toInt() and 0xFF) shl 16) or ((bytes.getOrElse(p + 1) { 0 }.toInt() and 0xFF) shl 8) or
+                (bytes.getOrElse(p + 2) { 0 }.toInt() and 0xFF)
+            for (s in 3 downTo 0) cells[i++] = colour((v shr (s * 6)) and 63)
+        }
+        val left = gw - cols * cell
+        for (c in cells.indices) {
+            val x0 = left + (c % cols) * cell
+            val y0 = (c / cols) * cell
+            for (dy in 0 until cell) for (dx in 0 until cell) game[(y0 + dy) * gw + x0 + dx] = cells[c]
+        }
+        val sw = 1920; val sh = 400
+        return ArrayPixels(sw, sh, IntArray(sw * sh) { idx -> shift(bilinear(game, gw, gh, (idx % sw) / 1.5, (idx / sw) / 1.5)) })
+    }
+
     private fun decodeOk(px: Pixels) = assertIs<StripDecoder.Result.Ok>(StripDecoder.decode(px)).frame
 
     /**

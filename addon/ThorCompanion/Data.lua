@@ -543,8 +543,9 @@ SlashCmdList.THORCOMPANION = function(msg)
     local cell = msg:match("^cell%s+(%d+)$")
     local shadeStep = msg:match("^shade%s+(%d+)$")
     if right then
-        setting("right", right, 0, 2000, "the distance from the right edge")
-        setting("top", top, 0, 1200, "the distance from the top edge")
+        local bar = ThorCompanionDB.shape == nil or ThorCompanionDB.shape == "bar"
+        setting(bar and "barRight" or "right", right, 0, 2000, "the distance from the right edge")
+        setting(bar and "barTop" or "top", top, 0, 1200, "the distance from the top edge")
     elseif msg == "shape line" or msg == "shape square" or msg == "shape bar" then
         ThorCompanionDB.shape = msg:sub(7)
         ThorCompanionDB.top = nil  -- each shape has its own default place

@@ -19,6 +19,7 @@ First pre-release of Forever Companion: WoW Forever's bags, character, quests, m
 ## Good to know
 
 - `/thor speed safe` sends every part of the square twice (slower, for when reads are flaky). `/thor speed fast` is the default.
-- The data goes out as a thin colour bar in the top-right corner, only while something is sent. `/thor shape square` brings back the always-there dark square, `/thor shape bar` the bar.
+- The data goes out as a thin colour bar along the top edge, left of the minimap, only while something is sent. `/thor pos <right> <top>` moves it, `/thor shape square` brings back the always-there dark square, `/thor shape bar` the bar.
+- Long-press the status line to save a log and a screenshot in Download, for troubleshooting.
 - The square: `/thor pos X Y` (place from the top right), `/thor cell N` (cell size), `/thor shade N` (brightness), `/thor hide` and `/thor show`.
 - `/thor taps off` stops the bottom screen's taps from using items; `/thor tips off` and `/thor auto off` stop the item tooltips and the zone pictures and icons the addon shows by itself.

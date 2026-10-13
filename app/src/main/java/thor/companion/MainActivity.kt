@@ -432,6 +432,7 @@ class MainActivity : Activity() {
         var changedAt = 0L
         var lastShown = -1
         var near = -1
+        var whyAt = 0L
         val assembler = PartAssembler()
         while (worker === Thread.currentThread()) {
             val t0 = SystemClock.uptimeMillis()
@@ -445,6 +446,16 @@ class MainActivity : Activity() {
             val px = screen.capture()
             val result = if (px == null) null else StripDecoder.decode(px, near)
             val frame = (result as? StripDecoder.Result.Ok)?.frame?.takeIf { it.crcOk }
+            // Why a read failed, now and then, for the log (long-press the status line).
+            if (frame == null && t0 - whyAt > 5000) {
+                whyAt = t0
+                val why = when (result) {
+                    null -> "capture failed"
+                    is StripDecoder.Result.Failed -> result.reason
+                    is StripDecoder.Result.Ok -> result.frame.let { "damaged v${it.version} cell ${it.cellPx} at ${it.x.toInt()},${it.row}" }
+                }
+                android.util.Log.i("ThorCompanion", "read: $why")
+            }
             synchronized(captures) {
                 captures.addLast(longArrayOf(t0, SystemClock.uptimeMillis() - t0))
                 while (captures.first()[0] < t0 - 60_000) captures.removeFirst()
@@ -2146,7 +2157,13 @@ class MainActivity : Activity() {
         keys.execute {
             val out = "/sdcard/Download/ForeverCompanion-log.txt"
             val ok = RootShell.exec("logcat -d -t 3000 -v time > $out 2>&1; echo done")?.trim() == "done"
-            runOnUiThread { say(if (ok) "Log saved: Download/ForeverCompanion-log.txt" else "Log not saved (no root shell)") }
+            // And a picture of the game's screen, to see what the app sees there.
+            val target = screen.displayId?.takeIf { it.all(Char::isDigit) }?.let { "-d $it " } ?: ""
+            val shot = ok && RootShell.exec("screencap $target-p /sdcard/Download/ForeverCompanion-screen.png; echo done")?.trim() == "done"
+            runOnUiThread {
+                say(if (shot) "Log and screenshot saved in Download (ForeverCompanion-log.txt, ForeverCompanion-screen.png)"
+                    else if (ok) "Log saved: Download/ForeverCompanion-log.txt" else "Log not saved (no root shell)")
+            }
         }
     }
 

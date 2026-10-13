@@ -71,7 +71,13 @@ object StripDecoder {
         val line = decodeAt(px, x0, y0, cell, COLS * COLS)
         if (line is Result.Ok && line.frame.crcOk) return line
         val square = decodeAt(px, x0, y0, cell, COLS)
-        return if (square is Result.Ok && !square.frame.crcOk && line is Result.Ok) line else square
+        if (square is Result.Ok && square.frame.crcOk) return square
+        // Damaged: the bar's version came through, so it is the bar (changed while it was taken).
+        if (bar is Result.Ok) return bar
+        if (square is Result.Ok && line is Result.Ok) return line
+        if (square is Result.Ok) return square
+        // Neither there: say why for the bar too, for the log.
+        return Result.Failed((bar as Result.Failed).reason + "; square: " + (square as Result.Failed).reason)
     }
 
     private fun decodeAt(px: Pixels, x0: Double, y0: Int, cell: Double, perRow: Int): Result {
@@ -168,7 +174,10 @@ object StripDecoder {
             bytes[g * 3] = (v shr 16).toByte(); bytes[g * 3 + 1] = (v shr 8).toByte(); bytes[g * 3 + 2] = v.toByte()
         }
         val head = bytes.copyOfRange(0, 4)
-        if ((head[0].toInt() and 0xFF) != BAR_VERSION) return Result.Failed("not the bar")
+        if ((head[0].toInt() and 0xFF) != BAR_VERSION) {
+            return Result.Failed("not the bar (header %d, cell %.1f at %.0f,%d, black %s)".format(
+                head[0].toInt() and 0xFF, cell, x0, y0, black.joinToString("/") { it.toInt().toString() }))
+        }
         val length = head[3].toInt() and 0xFF
         if (4 + length + 2 > bytes.size) return Result.Failed("bad length $length")
         val body = bytes.copyOfRange(4, 4 + length)

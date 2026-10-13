@@ -71,7 +71,9 @@ local function settings()
     -- The bar's colours blur into each other below 3 pixels a cell.
     local cell = db.cell or 3
     if barShape() and cell < 3 then cell = 3 end
-    return cell, db.shade or 24, db.right or 0, db.top or ((lineShape() or barShape()) and 0 or 22)
+    -- The bar has its own place: left of the minimap, clear of the zone name (/thor pos).
+    if barShape() then return cell, db.shade or 24, db.barRight or 360, db.barTop or 0 end
+    return cell, db.shade or 24, db.right or 0, db.top or (lineShape() and 0 or 22)
 end
 
 local function shade(level)

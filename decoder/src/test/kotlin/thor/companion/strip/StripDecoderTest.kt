@@ -104,11 +104,22 @@ class StripDecoderTest {
         val img = javax.imageio.ImageIO.read(javaClass.getResourceAsStream("/addon-bar-v5.png"))
         val game = img.getRGB(0, 0, img.width, img.height, null, 0, img.width).map { it and 0xFFFFFF }.toIntArray()
         val sw = img.width * 3 / 2; val sh = img.height * 3 / 2
-        val px = ArrayPixels(sw, sh, IntArray(sw * sh) { idx -> shift(bilinear(game, img.width, img.height, (idx % sw) / 1.5, (idx / sw) / 1.5)) })
+        val px = ArrayPixels(sw, sh, IntArray(sw * sh) { idx -> thorColour(bilinear(game, img.width, img.height, (idx % sw) / 1.5, (idx / sw) / 1.5)) })
         val frame = decodeOk(px)
         assertTrue(frame.crcOk)
         assertEquals(StripDecoder.BAR_VERSION, frame.version)
         assertEquals("TS1|Xandra|5|40912|1420|0.3187|0.6556|bar test with a longer payload 0123456789 ÄÖÜ", String(frame.payload))
+    }
+
+    /** Jesse's screenshot from the Thor (2026-10-13, top right 520x40): the bar as the device really shows it. */
+    @Test
+    fun decodesTheColourBarFromARealThorScreenshot() {
+        val img = javax.imageio.ImageIO.read(javaClass.getResourceAsStream("/thor-bar-real.png"))
+        val px = ArrayPixels(img.width, img.height, img.getRGB(0, 0, img.width, img.height, null, 0, img.width).map { it and 0xFFFFFF }.toIntArray())
+        val frame = decodeOk(px)
+        assertTrue(frame.crcOk)
+        assertEquals(StripDecoder.BAR_VERSION, frame.version)
+        assertEquals("6480:1:62,5075:9:63,3308:1:64,248683:1:65,5085:1:66", String(frame.payload))
     }
 
     @Test
@@ -161,7 +172,7 @@ class StripDecoderTest {
             for (dy in 0 until cell) for (dx in 0 until cell) game[(y0 + dy) * gw + x0 + dx] = cells[c]
         }
         val sw = 1920; val sh = 400
-        return ArrayPixels(sw, sh, IntArray(sw * sh) { idx -> shift(bilinear(game, gw, gh, (idx % sw) / 1.5, (idx / sw) / 1.5)) })
+        return ArrayPixels(sw, sh, IntArray(sw * sh) { idx -> thorColour(bilinear(game, gw, gh, (idx % sw) / 1.5, (idx / sw) / 1.5)) })
     }
 
     private fun decodeOk(px: Pixels) = assertIs<StripDecoder.Result.Ok>(StripDecoder.decode(px)).frame
@@ -228,6 +239,21 @@ class StripDecoderTest {
         val nr = (0.85 * r + 0.45 * g + 0.05 * b).toInt().coerceIn(0, 255)
         val ng = (0.20 * r + 0.98 * g + 0.04 * b).toInt().coerceIn(0, 255)
         val nb = (0.03 * r + 0.30 * g + 0.95 * b).toInt().coerceIn(0, 255)
+        return (nr shl 16) or (ng shl 8) or nb
+    }
+
+    /**
+     * The Thor's colour correction as measured on a real screenshot (2026-10-13): the
+     * colours mix in linear light, e.g. red at 0.6 shows as 8c1a11, green as 43972a,
+     * blue as 000093, while the grey at 0.6 stays 999999.
+     */
+    private fun thorColour(c: Int): Int {
+        fun lin(v: Int): Double { val f = v / 255.0; return if (f <= 0.04045) f / 12.92 else Math.pow((f + 0.055) / 1.055, 2.4) }
+        fun enc(l: Double): Int { val v = l.coerceIn(0.0, 1.0); return (255 * (if (v <= 0.0031308) v * 12.92 else 1.055 * Math.pow(v, 1 / 2.4) - 0.055) + 0.5).toInt() }
+        val r = lin(c shr 16 and 0xFF); val g = lin(c shr 8 and 0xFF); val b = lin(c and 0xFF)
+        val nr = enc(0.823 * r + 0.177 * g)
+        val ng = enc(0.032 * r + 0.968 * g)
+        val nb = enc(0.018 * r + 0.073 * g + 0.909 * b)
         return (nr shl 16) or (ng shl 8) or nb
     }
 }

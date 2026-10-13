@@ -1,6 +1,7 @@
 package thor.companion.strip
 
 import kotlin.math.abs
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -142,7 +143,10 @@ object StripDecoder {
             val y = (y0 + (i / BAR_COLS) * cell).roundToInt().coerceIn(0, px.height - 1)
             return px.rgb(x, y)
         }
-        fun rgb(c: Int) = doubleArrayOf((c shr 16 and 0xFF).toDouble(), (c shr 8 and 0xFF).toDouble(), (c and 0xFF).toDouble())
+        // The Thor mixes the colours in linear light (its colour correction), so unmix there:
+        // its pure red, green and blue at level 3 add up to the grey at level 3 only then.
+        fun lin(v: Int): Double { val f = v / 255.0; return if (f <= 0.04045) f / 12.92 else ((f + 0.055) / 1.055).pow(2.4) }
+        fun rgb(c: Int) = doubleArrayOf(lin(c shr 16 and 0xFF), lin(c shr 8 and 0xFF), lin(c and 0xFF))
         val k = COLS
         val black = rgb(average(colour(k), colour(k + 7)))
         // Columns of the mix: what full red, green and blue each add to black.
@@ -151,7 +155,8 @@ object StripDecoder {
         fun unmix(c: Int): DoubleArray {
             val v = rgb(c)
             val d = DoubleArray(3) { v[it] - black[it] }
-            return DoubleArray(3) { r -> 3 * (inv[r][0] * d[0] + inv[r][1] * d[1] + inv[r][2] * d[2]) }
+            // Back to the screen's brightness steps, where the four levels are evenly apart.
+            return DoubleArray(3) { r -> 255 * maxOf(0.0, inv[r][0] * d[0] + inv[r][1] * d[1] + inv[r][2] * d[2]).pow(1 / 2.4) }
         }
         // Where each grey level lands per channel once unmixed (the screen isn't linear).
         val greys = Array(4) { unmix(colour(k + it)) }

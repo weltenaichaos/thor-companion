@@ -185,6 +185,11 @@ class MainActivity : Activity() {
         }
         statusRow.addView(statusDot, LinearLayout.LayoutParams(dp(10), dp(10)))
         statusRow.addView(status, LinearLayout.LayoutParams(0, -2, 1f))
+        // Shown only when GitHub has a newer build: one tap asks, a second within 3 s updates.
+        updateButton = chip("Update") { updateTapped() }.apply {
+            background = Theme.box(context, ACCENT, 18); setTextColor(Color.BLACK); visibility = View.GONE
+        }
+        statusRow.addView(updateButton, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(6) })
         statusRow.addView(loadButton)
         // Closes the app for good (no task manager needed): a second tap within 3 s confirms.
         statusRow.addView(chip("Exit") {
@@ -206,6 +211,15 @@ class MainActivity : Activity() {
         show(Panel.BAGS)
         updateCompass()
         say("Looking for the game…")
+        // Just updated: the addon comes along, but the game only takes it at its next start.
+        val version = Updater.installedVersion(this)
+        val before = getPreferences(MODE_PRIVATE).getString("version", null)
+        getPreferences(MODE_PRIVATE).edit().putString("version", version).apply()
+        if (before != null && before != version) android.app.AlertDialog.Builder(this)
+            .setTitle("Updated to $version")
+            .setMessage("The new addon is in place. Close the game and start it again through the launcher so it loads the addon too.")
+            .setPositiveButton("OK", null)
+            .show()
         // The last crash, once: its first lines, to send along.
         if (crashFile.exists()) {
             val trace = runCatching { crashFile.readText() }.getOrDefault("")
@@ -233,6 +247,58 @@ class MainActivity : Activity() {
         super.onStart()
         android.util.Log.i("ThorCompanion", "onStart")
         worker = Thread(::loop, "strip-reader").apply { isDaemon = true; start() }
+        content.removeCallbacks(updateCheck)
+        content.post(updateCheck)
+    }
+
+    private lateinit var updateButton: TextView
+    @Volatile private var update: Updater.Release? = null
+    private var updateAskedAt = -10_000L
+    @Volatile private var updating = false
+
+    /** Looks for a newer build on GitHub now and every 30 minutes (one small request). */
+    private val updateCheck: Runnable = object : Runnable {
+        override fun run() {
+            Thread {
+                val found = Updater.check(this@MainActivity)
+                runOnUiThread {
+                    if (found != null) update = found
+                    update?.let { updateButton.text = "Update ${it.version}"; updateButton.visibility = View.VISIBLE }
+                }
+            }.apply { isDaemon = true; start() }
+            content.postDelayed(this, 30 * 60_000L)
+        }
+    }
+
+    private fun updateTapped() {
+        val release = update ?: return
+        if (updating) return
+        val now = SystemClock.uptimeMillis()
+        if (now - updateAskedAt > 3000) {
+            updateAskedAt = now
+            say("Tap Update again to install ${release.version} (the app restarts by itself)")
+            return
+        }
+        updating = true
+        say("Downloading ${release.version}…")
+        val display = display?.displayId ?: 0
+        Thread {
+            val apk = Updater.download(this, release) { pct -> runOnUiThread { say("Downloading ${release.version}… $pct%", notice = false) } }
+            if (apk == null) {
+                updating = false
+                runOnUiThread { say("The download failed. Check the Thor's internet and tap Update again.") }
+                return@Thread
+            }
+            runOnUiThread { say("Installing ${release.version}; the app closes and opens again…") }
+            if (!Updater.install(this, apk, display)) {
+                updating = false
+                // No root shell: Android's own installer asks instead.
+                runOnUiThread {
+                    say("Couldn't install by itself; opening the download in the browser")
+                    runCatching { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(release.apkUrl))) }
+                }
+            }
+        }.apply { isDaemon = true; start() }
     }
 
     /** Where you told the app your Thor-Forever folder is, or null to look for it. */
@@ -294,6 +360,7 @@ class MainActivity : Activity() {
     override fun onStop() {
         android.util.Log.i("ThorCompanion", "onStop")
         closeCompose()
+        content.removeCallbacks(updateCheck)
         worker = null
         watcher = null
         runCatching { watchSocket?.close() }

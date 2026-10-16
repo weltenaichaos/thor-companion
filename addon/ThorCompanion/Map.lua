@@ -311,7 +311,7 @@ function ns.MapPicturePayload()
     local cl, ct, cw, ch = physical(art)
     if not sl or not cl then return nil end
     local r = function(v) return math.floor(v + 0.5) end
-    return string.format("TW1|%d|%d|%d|%d|%d|%d", pictureMap, r(cl - sl), r(st - ct), r(cw), r(ch), (ThorCompanionDB and ThorCompanionDB.cell) or 3)
+    return string.format("TW1|%d|%d|%d|%d|%d|%d", pictureMap, r(cl - sl), r(st - ct), r(cw), r(ch), ns.StripCellSize())
 end
 
 -- For /thor map: what the map picture did last, and the places message.

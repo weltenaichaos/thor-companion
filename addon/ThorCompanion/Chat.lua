@@ -88,6 +88,7 @@ end
 -- <length> is how long the box's text is (in bytes): said again when it changes in
 -- the first seconds after the box opened, so the app sees whether its paste arrived.
 local openN, openPending, openedAt = 0, false, -100
+local reports = 0
 
 local WATCH = 8   -- seconds after the box opened in which text changes are reported
 
@@ -117,7 +118,9 @@ end
 function ns.ChatOpenPayload()
     if not openPending or GetTime() - openedAt < 0.1 then return nil end
     openPending = false
-    return "TE1|" .. openN .. "|" .. (activeEditBox() and "open" or "closed") .. "|" .. groupCommand() .. "|" .. textLength()
+    -- The last field only counts the reports, so the same state said again is a new message.
+    reports = reports + 1
+    return "TE1|" .. openN .. "|" .. (activeEditBox() and "open" or "closed") .. "|" .. groupCommand() .. "|" .. textLength() .. "|" .. reports
 end
 
 -- Only watched, never called: an addon that opens the chat box itself makes the
@@ -134,6 +137,8 @@ local function hookEditBoxes()
             eb:HookScript("OnTextChanged", function()
                 if GetTime() - openedAt < WATCH then openPending = true end
             end)
+            -- Closed (sent or cancelled): said at once, so the app knows its Enter took.
+            eb:HookScript("OnEditFocusLost", function() openPending = true end)
         end
     end
 end
@@ -277,3 +282,10 @@ end
 function ns.ChatChannels(on)
     ThorCompanionDB.chatChannels = on
 end
+
+-- In the first seconds after the chat box opened, while it stays open, its state is
+-- said again every second: an Enter that got lost leaves no event behind, and the app
+-- tries it once more. (Not longer: each report cuts into the square's other messages.)
+C_Timer.NewTicker(1, function()
+    if GetTime() - openedAt < 15 and activeEditBox() then openPending = true end
+end)

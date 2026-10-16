@@ -118,6 +118,13 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A crash leaves its cause in a file, shown once at the next start (so it can be reported).
+        val crashFile = java.io.File(filesDir, "crash.txt")
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            runCatching { crashFile.writeText(android.util.Log.getStackTraceString(e).take(4000)) }
+            previous?.uncaughtException(t, e)
+        }
         // Taps here must not take the key focus (or the controller) away from the game.
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
         screen = TopScreen(this)
@@ -169,14 +176,20 @@ class MainActivity : Activity() {
             maxLines = 2
             ellipsize = android.text.TextUtils.TruncateAt.END
             setPadding(dp(8), 0, dp(8), 0)
-            // Long-press: the battery check (how much reading the game's screen costs).
-            setOnLongClickListener { say(captureStats()); true }
+            // Long-press: the battery check (how much reading the game's screen costs), and
+            // the Thor's recent log saved in Download, to send along when something goes wrong.
+            setOnLongClickListener { say(captureStats()); saveLog(); true }
         }
         loadButton = chip("Load from the game") {
             pressKey(ActionKeys.REFRESH, onDone = { say("Asked the game for everything again…") }) { err -> say("Couldn't ask the game: $err") }
         }
         statusRow.addView(statusDot, LinearLayout.LayoutParams(dp(10), dp(10)))
         statusRow.addView(status, LinearLayout.LayoutParams(0, -2, 1f))
+        // Shown only when GitHub has a newer build: one tap asks, a second within 3 s updates.
+        updateButton = chip("Update") { updateTapped() }.apply {
+            background = Theme.box(context, ACCENT, 18); setTextColor(Color.BLACK); visibility = View.GONE
+        }
+        statusRow.addView(updateButton, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(6) })
         statusRow.addView(loadButton)
         // Closes the app for good (no task manager needed): a second tap within 3 s confirms.
         statusRow.addView(chip("Exit") {
@@ -198,6 +211,25 @@ class MainActivity : Activity() {
         show(Panel.BAGS)
         updateCompass()
         say("Looking for the game…")
+        // Just updated: the addon comes along, but the game only takes it at its next start.
+        val version = Updater.installedVersion(this)
+        val before = getPreferences(MODE_PRIVATE).getString("version", null)
+        getPreferences(MODE_PRIVATE).edit().putString("version", version).apply()
+        if (before != null && before != version) android.app.AlertDialog.Builder(this)
+            .setTitle("Updated to $version")
+            .setMessage("The new addon is in place. Close the game and start it again through the launcher so it loads the addon too.")
+            .setPositiveButton("OK", null)
+            .show()
+        // The last crash, once: its first lines, to send along.
+        if (crashFile.exists()) {
+            val trace = runCatching { crashFile.readText() }.getOrDefault("")
+            crashFile.delete()
+            if (trace.isNotBlank()) android.app.AlertDialog.Builder(this)
+                .setTitle("The app crashed last time")
+                .setMessage(trace.lines().take(12).joinToString("\n"))
+                .setPositiveButton("OK", null)
+                .show()
+        }
     }
 
     private var closeAskedAt = -10_000L
@@ -213,7 +245,60 @@ class MainActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
+        android.util.Log.i("ThorCompanion", "onStart")
         worker = Thread(::loop, "strip-reader").apply { isDaemon = true; start() }
+        content.removeCallbacks(updateCheck)
+        content.post(updateCheck)
+    }
+
+    private lateinit var updateButton: TextView
+    @Volatile private var update: Updater.Release? = null
+    private var updateAskedAt = -10_000L
+    @Volatile private var updating = false
+
+    /** Looks for a newer build on GitHub now and every 30 minutes (one small request). */
+    private val updateCheck: Runnable = object : Runnable {
+        override fun run() {
+            Thread {
+                val found = Updater.check(this@MainActivity)
+                runOnUiThread {
+                    if (found != null) update = found
+                    update?.let { updateButton.text = "Update ${it.version}"; updateButton.visibility = View.VISIBLE }
+                }
+            }.apply { isDaemon = true; start() }
+            content.postDelayed(this, 30 * 60_000L)
+        }
+    }
+
+    private fun updateTapped() {
+        val release = update ?: return
+        if (updating) return
+        val now = SystemClock.uptimeMillis()
+        if (now - updateAskedAt > 3000) {
+            updateAskedAt = now
+            say("Tap Update again to install ${release.version} (the app restarts by itself)")
+            return
+        }
+        updating = true
+        say("Downloading ${release.version}…")
+        val display = display?.displayId ?: 0
+        Thread {
+            val apk = Updater.download(this, release) { pct -> runOnUiThread { say("Downloading ${release.version}… $pct%", notice = false) } }
+            if (apk == null) {
+                updating = false
+                runOnUiThread { say("The download failed. Check the Thor's internet and tap Update again.") }
+                return@Thread
+            }
+            runOnUiThread { say("Installing ${release.version}; the app closes and opens again…") }
+            if (!Updater.install(this, apk, display)) {
+                updating = false
+                // No root shell: Android's own installer asks instead.
+                runOnUiThread {
+                    say("Couldn't install by itself; opening the download in the browser")
+                    runCatching { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(release.apkUrl))) }
+                }
+            }
+        }.apply { isDaemon = true; start() }
     }
 
     /** Where you told the app your Thor-Forever folder is, or null to look for it. */
@@ -267,8 +352,15 @@ class MainActivity : Activity() {
         return box
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        android.util.Log.i("ThorCompanion", "window focus $hasFocus")
+    }
+
     override fun onStop() {
+        android.util.Log.i("ThorCompanion", "onStop")
         closeCompose()
+        content.removeCallbacks(updateCheck)
         worker = null
         watcher = null
         runCatching { watchSocket?.close() }
@@ -407,6 +499,7 @@ class MainActivity : Activity() {
         var changedAt = 0L
         var lastShown = -1
         var near = -1
+        var whyAt = 0L
         val assembler = PartAssembler()
         while (worker === Thread.currentThread()) {
             val t0 = SystemClock.uptimeMillis()
@@ -420,6 +513,16 @@ class MainActivity : Activity() {
             val px = screen.capture()
             val result = if (px == null) null else StripDecoder.decode(px, near)
             val frame = (result as? StripDecoder.Result.Ok)?.frame?.takeIf { it.crcOk }
+            // Why a read failed, now and then, for the log (long-press the status line).
+            if (frame == null && t0 - whyAt > 5000) {
+                whyAt = t0
+                val why = when (result) {
+                    null -> "capture failed"
+                    is StripDecoder.Result.Failed -> result.reason
+                    is StripDecoder.Result.Ok -> result.frame.let { "damaged v${it.version} cell ${it.cellPx} at ${it.x.toInt()},${it.row}" }
+                }
+                android.util.Log.i("ThorCompanion", "read: $why")
+            }
             synchronized(captures) {
                 captures.addLast(longArrayOf(t0, SystemClock.uptimeMillis() - t0))
                 while (captures.first()[0] < t0 - 60_000) captures.removeFirst()
@@ -454,7 +557,7 @@ class MainActivity : Activity() {
                     // While the start-up card shows, each message may tick something off.
                     if (!ready) runOnUiThread { if (!ready) render() }
                 }
-            } else if (++misses == 4) {
+            } else if (++misses == 4 && !barMode && listening == null && SystemClock.uptimeMillis() >= quietUntil) {
                 near = -1
                 val why = when {
                     px == null -> "the capture failed"
@@ -483,6 +586,7 @@ class MainActivity : Activity() {
             // while it was taken) is read again at the usual pace.
             if (result is StripDecoder.Result.Ok) {
                 absent = 0; seenSquare = true
+                barMode = result.frame.version == StripDecoder.BAR_VERSION
             } else absent++
             // Gone for a few seconds: logged out, the character screen or a loading screen.
             // The card stands in for the tabs until the game says again who is playing,
@@ -491,7 +595,12 @@ class MainActivity : Activity() {
             // leave its last picture on the top screen. The addon sends its status at least
             // every 10 s, so nothing new for longer means it is gone.
             val stale = messageAt != 0L && SystemClock.uptimeMillis() - messageAt > STALE_MS
-            if ((absent == 3 && seenSquare || stale) && !away) {
+            // While the microphone listens (and a little after), the game may stand still: the
+            // speech service takes the sound, and the game can pause for that. Not "gone".
+            val speaking = listening != null || SystemClock.uptimeMillis() < quietUntil
+            // The colour bar is only there while something is sent: its absence says nothing
+            // (the status comes every 10 s, so "stale" still notices a game that is gone).
+            if ((absent == 3 && seenSquare && !barMode || stale) && !away && !speaking) {
                 away = true
                 awaitStatus = true
                 fresh.clear()
@@ -503,6 +612,8 @@ class MainActivity : Activity() {
                 game == Game.CLOSED && result !is StripDecoder.Result.Ok -> 30_000L
                 game == Game.STARTING && result !is StripDecoder.Result.Ok -> 10_000L
                 absent > 0 && !seenSquare -> 10_000L
+                // The bar comes and goes: look once a second for the next message.
+                barMode && absent > 0 -> 1000L
                 absent in 1..4 -> 1000L
                 absent == 5 -> 10_000L
                 absent > 5 -> 5000L
@@ -1072,6 +1183,7 @@ class MainActivity : Activity() {
 
     /** The status line, with its dot: green while the game's data comes in, red when it stopped, amber before it ever came. */
     private fun say(text: String, notice: Boolean = true) {
+        if (notice) android.util.Log.i("ThorCompanion", "say: $text")
         if (notice) saidAt = SystemClock.uptimeMillis()
         status.text = text
         val since = SystemClock.uptimeMillis() - frameAt
@@ -1835,6 +1947,9 @@ class MainActivity : Activity() {
         footer.addView(quick)
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, 0) }
         row.addView(field, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
+        val mic = chip("🎤") {}
+        mic.setOnClickListener { if (listening != null) stopListening() else listen(field, mic) }
+        row.addView(mic, LinearLayout.LayoutParams(dp(48), -2).apply { marginEnd = dp(6) })
         row.addView(chip("Send") { send() }.apply { background = Theme.box(context, ACCENT, 18); setTextColor(Color.BLACK) })
         row.addView(chip("✕") { closeCompose() }, LinearLayout.LayoutParams(dp(44), -2).apply { marginStart = dp(4) })
         footer.addView(row)
@@ -1856,7 +1971,149 @@ class MainActivity : Activity() {
         getPreferences(MODE_PRIVATE).edit().putString("quickReplies", list.joinToString("\n")).apply()
     }
 
+    /** The addon sends with the colour bar (there only while sending), not the dark square. */
+    @Volatile private var barMode = false
+
+    /** Speech to text for the message being written (null: not listening). */
+    @Volatile private var listening: android.speech.SpeechRecognizer? = null
+    /** Until then a game that stands still is not taken for gone (see the reader loop). */
+    @Volatile private var quietUntil = 0L
+    private var micFor: Pair<android.widget.EditText, TextView>? = null
+
+    /**
+     * Listens once through the Thor's microphone and puts what you said into [field],
+     * after what is already there. Nothing is sent: you read it, fix it if need be, and
+     * tap Send. The microphone is only on until you stop talking (or tap 🎤 again).
+     */
+    private fun listen(field: android.widget.EditText, mic: TextView) {
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            micFor = field to mic
+            requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), MIC_PERMISSION)
+            return
+        }
+        if (!android.speech.SpeechRecognizer.isRecognitionAvailable(this)) {
+            say("No speech recognition on this device: install Speech Services by Google from the Play Store")
+            return
+        }
+        val before = field.text.toString().trimEnd()
+        fun show(words: String) {
+            val text = listOf(before, words.trim()).filter { it.isNotEmpty() }.joinToString(" ")
+            field.setText(text.take(255))
+            field.setSelection(field.text.length)
+        }
+        val speechIntent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        }
+        val recognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(this)
+        listening = recognizer
+        micFor = field to mic
+        mic.background = Theme.box(this, Theme.BAD, 18)
+        say("Listening… speak your message")
+        fun words(b: android.os.Bundle?) =
+            b?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+        recognizer.setRecognitionListener(object : android.speech.RecognitionListener {
+            override fun onPartialResults(b: android.os.Bundle?) { words(b).takeIf { it.isNotBlank() }?.let(::show) }
+            override fun onResults(b: android.os.Bundle?) {
+                busyRetried = false
+                val w = words(b)
+                if (w.isNotBlank()) { show(w); say("Check the text, then tap Send") } else say("Didn't catch that: tap 🎤 to try again")
+                stopListening()
+            }
+            override fun onError(error: Int) {
+                if (listening !== recognizer) return
+                stopListening()
+                // Busy: the last listener was still closing. Once more, a moment later.
+                if (error == android.speech.SpeechRecognizer.ERROR_RECOGNIZER_BUSY && !busyRetried) {
+                    busyRetried = true
+                    footer.postDelayed({ if (composing != null) listen(field, mic) }, 700)
+                    return
+                }
+                busyRetried = false
+                say(when (error) {
+                    android.speech.SpeechRecognizer.ERROR_NO_MATCH, android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Didn't catch that: tap 🎤 to try again"
+                    android.speech.SpeechRecognizer.ERROR_NETWORK, android.speech.SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech recognition needs the internet here"
+                    android.speech.SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "The app may not use the microphone (Android settings)"
+                    12, 13 -> "Speech recognition has no language to use (error $error)"
+                    else -> "Speech recognition stopped (error $error)"
+                })
+            }
+            override fun onReadyForSpeech(p: android.os.Bundle?) {}
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rms: Float) {}
+            override fun onBufferReceived(b: ByteArray?) {}
+            override fun onEndOfSpeech() { mic.background = Theme.box(this@MainActivity, RAISED, 18) }
+            override fun onEvent(type: Int, p: android.os.Bundle?) {}
+        })
+        fun start(language: String?) {
+            if (listening !== recognizer) return
+            language?.let { speechIntent.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, it) }
+            runCatching { recognizer.startListening(speechIntent) }.onFailure { stopListening(); say("Speech recognition didn't start: ${it.message}") }
+        }
+        // Android 13+: ask once which languages it has (with a recognizer of its own: one
+        // that is still answering that is "busy"), and pick the system's or the nearest one.
+        if (android.os.Build.VERSION.SDK_INT >= 33 && !speechChecked) {
+            val checker = android.speech.SpeechRecognizer.createSpeechRecognizer(this)
+            var answered = false
+            fun go(language: String?) {
+                if (answered) return
+                answered = true
+                speechChecked = true
+                speechLang = language
+                footer.post { runCatching { checker.destroy() } }
+                footer.postDelayed({ start(language) }, 300)
+            }
+            val asked = runCatching {
+                checker.checkRecognitionSupport(speechIntent, mainExecutor, object : android.speech.RecognitionSupportCallback {
+                    override fun onSupportResult(support: android.speech.RecognitionSupport) {
+                        val online = if (android.os.Build.VERSION.SDK_INT >= 34) support.onlineLanguages else emptyList()
+                        go(runCatching { speechLanguage(support.installedOnDeviceLanguages + online) }.getOrNull())
+                    }
+                    override fun onError(error: Int) { go(null) }
+                })
+            }.isSuccess
+            if (!asked) go(null)
+            // No answer at all: listen without choosing.
+            footer.postDelayed({ go(null) }, 3000)
+        } else start(speechLang)
+    }
+
+    /** The language picked for speech (null: the speech app's own), asked once per app start. */
+    private var speechChecked = false
+    private var speechLang: String? = null
+    private var busyRetried = false
+
+    /** The system language if the speech app has it, else the same language from another country, else English. */
+    private fun speechLanguage(have: List<String>): String? {
+        if (have.isEmpty()) return null
+        val system = Locale.getDefault()
+        fun same(tag: String) = Locale.forLanguageTag(tag)
+        return have.firstOrNull { same(it) == system }
+            ?: have.firstOrNull { same(it).language == system.language }
+            ?: have.firstOrNull { it.equals("en-US", true) }
+            ?: have.firstOrNull { same(it).language == "en" }
+            ?: have.first()
+    }
+
+    private fun stopListening() {
+        quietUntil = SystemClock.uptimeMillis() + 15_000
+        // Destroyed after the callback that stopped it has returned, not inside it.
+        listening?.let { r -> runCatching { r.cancel() }; footer.post { runCatching { r.destroy() } } }
+        listening = null
+        micFor?.second?.background = Theme.box(this, RAISED, 18)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, results)
+        if (requestCode != MIC_PERMISSION) return
+        val (field, mic) = micFor ?: return
+        if (results.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED && composing != null) listen(field, mic)
+        else say("Without the microphone, speech to text can't work")
+    }
+
     private fun closeCompose() {
+        stopListening()
+        micFor = null
         if (composing == null) return
         composing = null
         getSystemService(android.view.inputmethod.InputMethodManager::class.java)
@@ -1922,18 +2179,58 @@ class MainActivity : Activity() {
                     lastKeyAt = SystemClock.uptimeMillis()
                     SystemClock.sleep(50)
                 }
-                if (!pasted) pasteWorks = false
             }
             if (!pasted) {
                 val typed = KeySender.type(this, target, line)
                 if (typed != null && !typed.startsWith("(focus")) return@execute runOnUiThread { say("$label not sent: $typed") }
             }
-            KeySender.send(this, target, "ENTER")
+            // Enter, and make sure it took: the addon says when the box closes. Still open
+            // with the text after a while: that Enter got lost (the game had just come back
+            // to the front), so once more. Open and empty: closed with Escape (only on the
+            // addon's word that it is open; with the box closed, Escape opens the menu).
+            var enters = 0
+            while (enters < 2) {
+                val beforeEnter = chatBox
+                KeySender.send(this, target, "ENTER")
+                enters++
+                val until = SystemClock.uptimeMillis() + 3000
+                var left: ChatBox? = null
+                while (SystemClock.uptimeMillis() < until) {
+                    val now = chatBox
+                    if (now !== beforeEnter) { left = now; if (now == null || !now.open) break }
+                    lastKeyAt = SystemClock.uptimeMillis()
+                    SystemClock.sleep(50)
+                }
+                // Only on the addon's word after this Enter (it says so every second while the box is open).
+                val last = left ?: break
+                if (!last.open || last.n != box.n) break
+                if (last.length == 0) {
+                    android.util.Log.i("ThorCompanion", "chat box open and empty after Enter: Escape")
+                    KeySender.send(this, target, "ESCAPE")
+                    break
+                }
+                android.util.Log.i("ThorCompanion", "chat box still holds the text after Enter: once more")
+            }
             runOnUiThread { say(when {
                 pasted -> "$label: sent (pasted)"
-                tried -> "$label: sent (typed: the game didn't take the paste, so it types until the app restarts)"
+                tried -> "$label: sent (typed: the game didn't take the paste)"
                 else -> "$label: sent"
             }) }
+        }
+    }
+
+    /** The Thor's recent log (this app, the speech service, the game's input) into Download, through root. */
+    private fun saveLog() {
+        keys.execute {
+            val out = "/sdcard/Download/ForeverCompanion-log.txt"
+            val ok = RootShell.exec("logcat -d -t 3000 -v time > $out 2>&1; echo done")?.trim() == "done"
+            // And a picture of the game's screen, to see what the app sees there.
+            val target = screen.displayId?.takeIf { it.all(Char::isDigit) }?.let { "-d $it " } ?: ""
+            val shot = ok && RootShell.exec("screencap $target-p /sdcard/Download/ForeverCompanion-screen.png; echo done")?.trim() == "done"
+            runOnUiThread {
+                say(if (shot) "Log and screenshot saved in Download (ForeverCompanion-log.txt, ForeverCompanion-screen.png)"
+                    else if (ok) "Log saved: Download/ForeverCompanion-log.txt" else "Log not saved (no root shell)")
+            }
         }
     }
 
@@ -2227,6 +2524,7 @@ class MainActivity : Activity() {
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     private companion object {
+        const val MIC_PERMISSION = 7
         /** Message kinds kept across restarts. */
         /** After the square last changed, how long the app keeps reading five times a second (the addon assumes 2.5 s). */
         const val BUSY_MS = 3000L

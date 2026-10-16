@@ -1,6 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Only to look for and download a newer build from the project's GitHub releases (the Update button). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Speech to text for chat messages (the 🎤 key next to Send), only while it listens. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

@@ -1,5 +1,10 @@
 # Forever Companion
 
+> **Development continues in [thor-forever-app](https://github.com/weltenaichaos/thor-forever-app).**
+> The companion is now part of the WoW Forever app there. This repository stays as the
+> reference for the standalone version (last release: 0.24.2), and may become a separate
+> app again later.
+
 (Repository and addon folder keep the old name ThorCompanion, so the addon keeps its settings.)
 
 A second-screen companion for WoW Forever on the AYN Thor. The game runs on the top
